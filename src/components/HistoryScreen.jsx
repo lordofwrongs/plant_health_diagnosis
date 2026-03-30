@@ -23,10 +23,10 @@ export default function HistoryScreen({ onSelectResult }) {
   if (loading) return <div style={{ textAlign: 'center', padding: '50px' }}>Loading history...</div>
 
   return (
-    <div style={{ padding: '20px', maxWidth: '600px', margin: '0 auto' }}>
-      <h2 style={{ fontFamily: 'Playfair Display', color: '#1a3a2a' }}>Your Scans</h2>
+    <div style={{ padding: '20px', maxWidth: '600px', margin: '0 auto', width: '100%' }}>
+      <h2 style={{ fontFamily: 'Playfair Display', color: '#1a3a2a', marginBottom: '20px' }}>Your Scans</h2>
       {logs.length === 0 ? (
-        <p>No scans found yet.</p>
+        <p style={{ color: '#666' }}>No scans found. Start by scanning a plant!</p>
       ) : (
         <div style={{ display: 'grid', gap: '15px' }}>
           {logs.map(log => (
@@ -34,22 +34,26 @@ export default function HistoryScreen({ onSelectResult }) {
               key={log.id} 
               onClick={() => log.status === 'done' && onSelectResult(log)}
               style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: '15px', 
-                background: '#fff', 
-                padding: '10px', 
-                borderRadius: '10px',
+                display: 'flex', alignItems: 'center', gap: '15px', background: '#fff', 
+                padding: '12px', borderRadius: '15px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
                 cursor: log.status === 'done' ? 'pointer' : 'default',
-                opacity: log.status === 'done' ? 1 : 0.6
+                opacity: log.status === 'done' ? 1 : 0.7,
+                border: '1px solid rgba(82,183,136,0.1)'
               }}
             >
-              <img src={log.image_url} alt="" style={{ width: '60px', height: '60px', borderRadius: '8px', objectFit: 'cover' }} />
-              <div>
-                <h4 style={{ margin: 0 }}>{log.plant_name || 'Identifying...'}</h4>
-                <p style={{ margin: 0, fontSize: '12px', color: '#666' }}>
-                  Status: {log.status} • {new Date(log.created_at).toLocaleDateString()}
-                </p>
+              <img src={log.image_url} alt="" style={{ width: '60px', height: '60px', borderRadius: '10px', objectFit: 'cover' }} />
+              <div style={{ flex: 1 }}>
+                <h4 style={{ margin: '0 0 4px 0', color: '#1a3a2a' }}>{log.plant_name || 'Identifying...'}</h4>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '12px', color: '#8aaa96' }}>{new Date(log.created_at).toLocaleDateString()}</span>
+                  <span style={{ 
+                    fontSize: '11px', padding: '2px 8px', borderRadius: '10px', 
+                    background: log.status === 'done' ? '#e8f5e9' : '#fff8e1',
+                    color: log.status === 'done' ? '#2d6a4f' : '#e65100'
+                  }}>
+                    {log.status === 'done' ? 'Ready' : 'Processing'}
+                  </span>
+                </div>
               </div>
             </div>
           ))}
