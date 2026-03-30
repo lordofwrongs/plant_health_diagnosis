@@ -6,19 +6,23 @@ import HistoryScreen from './components/HistoryScreen.jsx'
 
 export default function App() {
   const [screen, setScreen] = useState('upload') // 'upload' | 'analysing' | 'results' | 'history'
-  const [logId, setLogId] = useState(null)
+  const [activeLogId, setActiveLogId] = useState(null)
   const [result, setResult] = useState(null)
 
-  // Initialize a Guest ID for history tracking if it doesn't exist
+  // Initialize a Guest ID for history tracking
   useEffect(() => {
     if (!localStorage.getItem('plant_care_guest_id')) {
       localStorage.setItem('plant_care_guest_id', `guest_${Math.random().toString(36).slice(2, 11)}`)
     }
   }, [])
 
-  const handleUploadComplete = (id) => {
-    setLogId(id)
-    setScreen('analysing')
+  const handleUploadComplete = (ids) => {
+    if (ids.length === 1) {
+      setActiveLogId(ids[0])
+      setScreen('analysing')
+    } else {
+      setScreen('history')
+    }
   }
 
   const handleResultReady = (data) => {
@@ -27,23 +31,23 @@ export default function App() {
   }
 
   const handleReset = () => {
-    setLogId(null)
+    setActiveLogId(null)
     setResult(null)
     setScreen('upload')
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <nav style={navStyles}>
-        <button onClick={handleReset} style={navBtn}>Home</button>
-        <button onClick={() => setScreen('history')} style={navBtn}>History</button>
+    <div style={styles.appContainer}>
+      <nav style={styles.nav}>
+        <button onClick={handleReset} style={styles.navLink}>Scan</button>
+        <button onClick={() => setScreen('history')} style={styles.navLink}>History</button>
       </nav>
 
       {screen === 'upload' && (
         <UploadScreen onUploadComplete={handleUploadComplete} />
       )}
       {screen === 'analysing' && (
-        <AnalysingScreen logId={logId} onResultReady={handleResultReady} />
+        <AnalysingScreen logId={activeLogId} onResultReady={handleResultReady} />
       )}
       {screen === 'results' && (
         <ResultsScreen result={result} onReset={handleReset} />
@@ -58,19 +62,18 @@ export default function App() {
   )
 }
 
-const navStyles = {
-  display: 'flex',
-  justifyContent: 'center',
-  gap: '20px',
-  padding: '15px',
-  background: '#fff',
-  borderBottom: '1px solid #eee'
-}
-
-const navBtn = {
-  background: 'none',
-  border: 'none',
-  color: '#2d6a4f',
-  cursor: 'pointer',
-  fontWeight: '500'
+const styles = {
+  appContainer: { minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#f0faf4' },
+  nav: { 
+    display: 'flex', 
+    justifyContent: 'center', 
+    gap: '30px', 
+    padding: '15px', 
+    background: '#fff', 
+    borderBottom: '1px solid #e8f5e9',
+    position: 'sticky',
+    top: 0,
+    zIndex: 10
+  },
+  navLink: { background: 'none', border: 'none', color: '#2d6a4f', fontWeight: '600', cursor: 'pointer', fontSize: '14px' }
 }
