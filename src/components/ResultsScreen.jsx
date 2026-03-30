@@ -1,7 +1,7 @@
 import React from 'react';
 
 export default function ResultsScreen({ result, onReset }) {
-  // Use the AI-provided color if available, otherwise calculate locally
+  // Use the AI-provided HealthColor if it exists, otherwise fallback to local logic
   const healthColor = result?.HealthColor 
     ? { bg: `${result.HealthColor}15`, text: result.HealthColor, dot: result.HealthColor }
     : getHealthColor(result?.HealthStatus);
@@ -27,17 +27,22 @@ export default function ResultsScreen({ result, onReset }) {
           )}
           <div style={styles.identityInfo}>
             <p style={styles.identityLabel}>Species Identified</p>
+            {/* Mapped to PlantName (PascalCase) */}
             <h2 style={styles.plantName}>{result?.PlantName || 'Unknown plant'}</h2>
-            <p style={styles.scientificName}>{result?.ScientificName}</p>
+            {/* Mapped to ScientificName */}
+            {result?.ScientificName && (
+              <p style={styles.scientificName}>{result.ScientificName}</p>
+            )}
             
             <div style={{ ...styles.healthBadge, background: healthColor.bg, color: healthColor.text }}>
               <span style={{ ...styles.healthDot, background: healthColor.dot }} />
+              {/* Mapped to HealthStatus (PascalCase) */}
               {result?.HealthStatus || 'Assessment pending'}
             </div>
           </div>
         </div>
 
-        {/* Visual Analysis Section (New) */}
+        {/* Visual Analysis Section */}
         {result?.VisualAnalysis && (
           <div style={styles.section} className="fade-up-delay-2">
             <div style={styles.sectionHeader}>
@@ -94,7 +99,7 @@ function parseList(val) {
   if (!val) return []
   if (Array.isArray(val)) return val
   if (typeof val === 'string') {
-    // Split by bullet points, newlines, or semicolons
+    // Splits by bullet points, newlines, or semicolons
     return val.split(/[•\n;]+/).map(s => s.trim()).filter(Boolean)
   }
   return []
@@ -103,8 +108,10 @@ function parseList(val) {
 function getHealthColor(health) {
   const h = (health || '').toLowerCase()
   if (h.includes('healthy')) return { bg: '#e8f5e9', text: '#1b5e20', dot: '#43a047' }
-  if (h.includes('deficient') || h.includes('risk') || h.includes('caution')) return { bg: '#fff8e1', text: '#e65100', dot: '#ffa000' }
-  if (h.includes('disease') || h.includes('critical') || h.includes('severe')) return { bg: '#ffebee', text: '#b71c1c', dot: '#e53935' }
+  if (h.includes('deficient') || h.includes('risk') || h.includes('caution') || h.includes('infection')) 
+    return { bg: '#fff8e1', text: '#e65100', dot: '#ffa000' }
+  if (h.includes('disease') || h.includes('critical') || h.includes('severe')) 
+    return { bg: '#ffebee', text: '#b71c1c', dot: '#e53935' }
   return { bg: '#f3f4f6', text: '#374151', dot: '#9ca3af' }
 }
 
@@ -138,6 +145,6 @@ const styles = {
   remedyText: { fontSize: '14px', color: '#4a6358', lineHeight: '1.6', fontWeight: '400' },
   expertTipBox: { background: '#fff9c4', borderRadius: '16px', padding: '20px 24px', marginBottom: '20px', border: '1px solid #fff176' },
   tipText: { fontSize: '14px', color: '#33691e', lineHeight: '1.6', fontWeight: '500' },
-  resetBtn: { width: '100%', padding: '16px', background: 'linear-gradient(135deg, #2d6a4f, #52b788)', color: '#fff', border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: '500', cursor: 'pointer', marginTop: '8px', marginBottom: '16px' },
+  resetBtn: { width: '100%', padding: '16px', background: 'linear-gradient(135deg, #2d6a4f, #52b788)', color: '#fff', border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: '500', cursor: 'pointer', marginTop: '8px', marginBottom: '16px', fontFamily: "inherit" },
   disclaimer: { fontSize: '11px', color: '#8aaa96', textAlign: 'center', lineHeight: '1.5' },
 }
