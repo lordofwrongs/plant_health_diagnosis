@@ -6,6 +6,7 @@ const BUCKET = 'plant_images'
 export default function UploadScreen({ onUploadComplete }) {
   const [previews, setPreviews] = useState([])
   const [files, setFiles] = useState([])
+  const [nickname, setNickname] = useState('') // New state for Plant Nickname
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState(null)
   const [statusMessage, setStatusMessage] = useState('')
@@ -23,13 +24,12 @@ export default function UploadScreen({ onUploadComplete }) {
   const getLocationContext = async () => {
     setStatusMessage('Syncing with satellites...')
     
-    // Create a promise for the IP fallback (faster, but less accurate)
     const ipFallback = async () => {
       try {
         const res = await fetch('https://ipapi.co/json/')
         const data = await res.json()
         return {
-          lat: data.latitude, // IP providers usually give approximate lat/lng
+          lat: data.latitude,
           lng: data.longitude,
           name: `${data.city}, ${data.region}`
         }
@@ -39,7 +39,6 @@ export default function UploadScreen({ onUploadComplete }) {
     }
 
     try {
-      // Race the GPS against a 12-second timeout
       const position = await new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           enableHighAccuracy: true,
@@ -51,7 +50,7 @@ export default function UploadScreen({ onUploadComplete }) {
       return {
         lat: position.coords.latitude,
         lng: position.coords.longitude,
-        name: null // Lat/Lng is preferred for weather logic
+        name: null 
       }
     } catch (err) {
       console.warn("GPS timeout or denied, using IP fallback context")
@@ -67,10 +66,7 @@ export default function UploadScreen({ onUploadComplete }) {
     setUploading(true)
     setError(null)
 
-    // 1. Innovative Context Gathering
     const context = await getLocationContext()
-
-    // 2. Multi-File Processing
     setStatusMessage(`Uploading ${files.length} images...`)
     const guestId = localStorage.getItem('plant_care_guest_id')
     const createdIds = []
@@ -80,7 +76,6 @@ export default function UploadScreen({ onUploadComplete }) {
         const ext = file.name.split('.').pop()
         const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
 
-        // Storage Upload
         const { error: uploadError } = await supabase.storage
           .from(BUCKET)
           .upload(fileName, file, { contentType: file.type })
@@ -90,7 +85,6 @@ export default function UploadScreen({ onUploadComplete }) {
         const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(fileName)
         const imageUrl = urlData.publicUrl
 
-        // DB Logging - Strict use of 'status' per your setup
         const { data: logData, error: insertError } = await supabase
           .from('plant_logs')
           .insert({ 
@@ -99,7 +93,8 @@ export default function UploadScreen({ onUploadComplete }) {
             status: 'pending', 
             latitude: context.lat,
             longitude: context.lng,
-            location_name: context.name
+            location_name: context.name,
+            plant_nickname: nickname || null // New field sent to DB
           })
           .select('id').single()
 
@@ -129,6 +124,20 @@ export default function UploadScreen({ onUploadComplete }) {
           Our AI uses local environmental data to diagnose your plant.
         </p>
 
+        {/* NEW: Plant Nickname Input Field */}
+        <div style={styles.inputWrapper}>
+          <label style={styles.label}>Identify this plant (optional)</label>
+          <input 
+            type="text" 
+            placeholder="e.g. Backyard Tomato, Office Lily" 
+            value={nickname}
+            onChange={(e) => setNickname(e.target.value)}
+            style={styles.input}
+            disabled={uploading}
+          />
+          <p style={styles.hint}>Used to track growth history for this specific plant.</p>
+        </div>
+
         <div 
           style={{ ...styles.dropZone, ...(previews.length > 0 ? styles.dropZoneWithImage : {}) }}
           onClick={() => previews.length === 0 && !uploading && inputRef.current.click()}
@@ -151,14 +160,7 @@ export default function UploadScreen({ onUploadComplete }) {
           )}
         </div>
 
-        <input 
-          ref={inputRef} 
-          type="file" 
-          accept="image/*" 
-          multiple 
-          style={{ display: 'none' }} 
-          onChange={(e) => handleFiles(e.target.files)} 
-        />
+        <input ref={inputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => handleFiles(e.target.files)} />
         
         {error && <div style={styles.errorContainer}>{error}</div>}
 
@@ -190,6 +192,10 @@ const styles = {
   card: { background: '#fff', borderRadius: '24px', padding: '32px 28px', width: '100%', maxWidth: '440px', boxShadow: '0 12px 48px rgba(26,58,42,0.08)' },
   cardTitle: { fontFamily: "'Playfair Display', serif", fontSize: '24px', color: '#1a3a2a', marginBottom: '8px' },
   cardSubtitle: { fontSize: '14px', color: '#4a6358', marginBottom: '24px', lineHeight: '1.5' },
+  inputWrapper: { marginBottom: '20px', textAlign: 'left' },
+  label: { fontSize: '13px', fontWeight: '600', color: '#2d6a4f', marginBottom: '6px', display: 'block' },
+  input: { width: '100%', padding: '12px', borderRadius: '12px', border: '1px solid #e0e6e3', fontSize: '14px', outline: 'none', background: '#fcfdfc' },
+  hint: { fontSize: '11px', color: '#8aaa96', marginTop: '5px' },
   dropZone: { border: '2px dashed #cbdad2', borderRadius: '16px', padding: '40px 20px', textAlign: 'center', cursor: 'pointer', background: '#fcfdfc', transition: 'all 0.2s ease' },
   dropZoneWithImage: { padding: '12px', border: '2px solid #52b788', background: '#fff' },
   previewGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))', gap: '12px' },
