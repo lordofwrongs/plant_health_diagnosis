@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '../supabaseClient.js'
 
 export default function HistoryScreen({ onSelectResult }) {
-  const [logs, setLogs] = useState([])
+  const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(true)
 
   const fetchHistory = useCallback(async () => {
@@ -13,20 +13,39 @@ export default function HistoryScreen({ onSelectResult }) {
       .eq('user_id', guestId)
       .order('created_at', { ascending: false })
 
-    if (!error) setLogs(data)
+    if (!error && data) {
+      // GROUPING LOGIC: Organizes flat logs into plant "identities"
+      const grouped = data.reduce((acc, log) => {
+        // Use nickname as the ID, or "Uncategorized" if null
+        const key = log.plant_nickname || `Uncategorized-${log.id}`;
+        if (!acc[key]) {
+          acc[key] = {
+            id: key,
+            nickname: log.plant_nickname || 'New Discovery',
+            plantName: log.PlantName || 'Identifying...',
+            latestTimestamp: log.created_at,
+            latestImage: log.image_url,
+            latestStatus: log.HealthStatus,
+            scans: []
+          };
+        }
+        acc[key].scans.push(log);
+        return acc;
+      }, {});
+
+      setGroups(Object.values(grouped));
+    }
     setLoading(false)
   }, [])
 
   useEffect(() => {
     fetchHistory()
-
     const channel = supabase
       .channel('history_realtime')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'plant_logs' }, () => {
         fetchHistory()
       })
       .subscribe()
-
     return () => { supabase.removeChannel(channel) }
   }, [fetchHistory])
 
@@ -34,59 +53,40 @@ export default function HistoryScreen({ onSelectResult }) {
 
   return (
     <div style={styles.container}>
-      <h2 style={styles.title}>Your Scans</h2>
-      {logs.length === 0 ? (
-        <p style={styles.emptyText}>No scans yet. Upload a photo to begin!</p>
+      <header style={styles.header}>
+        <h2 style={styles.title}>Your Garden</h2>
+        <p style={styles.subtitle}>{groups.length} plants being monitored</p>
+      </header>
+
+      {groups.length === 0 ? (
+        <p style={styles.emptyText}>No scans yet. Upload a photo to begin.</p>
       ) : (
         <div style={styles.list}>
-          {logs.map(log => {
-            const isDone = log.status === 'done';
-            return (
-              <div 
-                key={log.id} 
-                onClick={() => isDone && onSelectResult(log)}
-                style={{ 
-                  ...styles.card,
-                  cursor: isDone ? 'pointer' : 'wait',
-                  opacity: isDone ? 1 : 0.85,
-                  border: isDone ? '1px solid #e8f5e9' : '1px solid #fff3e0'
-                }}
-              >
-                {/* Image Preview */}
-                <div style={styles.imageWrapper}>
-                  <img src={log.image_url} alt="" style={styles.thumbnail} />
-                  {!isDone && <div style={styles.imageOverlay}><span className="spinner-small" /></div>}
+          {groups.map((group) => (
+            <div key={group.id} style={styles.card} onClick={() => onSelectResult(group.scans[0])}>
+              <div style={styles.imageWrapper}>
+                <img src={group.latestImage} style={styles.thumbnail} alt="Latest Scan" />
+                {group.scans.length > 1 && (
+                  <div style={styles.badge}>{group.scans.length} scans</div>
+                )}
+              </div>
+              
+              <div style={styles.content}>
+                <div style={styles.row}>
+                  <h3 style={styles.plantTitle}>{group.nickname}</h3>
+                  <span style={styles.timestamp}>
+                    {new Date(group.latestTimestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                  </span>
                 </div>
-
-                <div style={styles.content}>
-                  <div style={styles.row}>
-                    {/* Shows the AI name if done, otherwise a descriptive placeholder */}
-                    <h4 style={styles.plantTitle}>
-                      {log.PlantName || `Scan from ${new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
-                    </h4>
-                    
-                    {/* New: Quick Accuracy Score for ready items */}
-                    {isDone && log.AccuracyScore && (
-                      <span style={styles.miniScore}>{Math.round(log.AccuracyScore)}%</span>
-                    )}
-                  </div>
-
-                  <div style={styles.footer}>
-                    <span style={styles.date}>{new Date(log.created_at).toLocaleDateString()}</span>
-                    
-                    {/* Clearer Status Badges */}
-                    <span style={{ 
-                      ...styles.statusBadge,
-                      background: isDone ? '#e8f5e9' : '#fff3e0',
-                      color: isDone ? '#2d6a4f' : '#e65100'
-                    }}>
-                      {isDone ? 'View Results' : 'Analyzing...'}
-                    </span>
-                  </div>
+                <p style={styles.scientificName}>{group.plantName}</p>
+                <div style={styles.statusRow}>
+                  <div style={{ ...styles.statusDot, background: group.latestStatus?.toLowerCase().includes('healthy') ? '#4CAF50' : '#FF9800' }} />
+                  <span style={styles.statusText}>{group.latestStatus || 'Processing...'}</span>
                 </div>
               </div>
-            );
-          })}
+              <div style={styles.chevron}>›</div>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -94,24 +94,32 @@ export default function HistoryScreen({ onSelectResult }) {
 }
 
 const styles = {
-  container: { padding: '20px', maxWidth: '500px', margin: '0 auto', width: '100%' },
-  title: { fontFamily: "'Playfair Display', serif", color: '#1a3a2a', marginBottom: '24px', fontSize: '28px' },
-  loading: { textAlign: 'center', padding: '100px 20px', color: '#8aaa96' },
+  container: { padding: '24px 20px', maxWidth: '600px', margin: '0 auto' },
+  header: { marginBottom: '24px' },
+  title: { fontFamily: "'Playfair Display', serif", color: '#1a3a2a', fontSize: '28px', margin: '0 0 4px 0' },
+  subtitle: { fontSize: '14px', color: '#6a8378' },
+  loading: { textAlign: 'center', padding: '100px 20px', color: '#8aaa96', fontFamily: 'system-ui' },
   list: { display: 'grid', gap: '16px' },
   card: { 
     display: 'flex', alignItems: 'center', gap: '16px', background: '#fff', 
-    padding: '12px', borderRadius: '18px', boxShadow: '0 4px 15px rgba(0,0,0,0.04)',
-    transition: 'all 0.2s ease'
+    padding: '16px', borderRadius: '20px', boxShadow: '0 4px 20px rgba(26,58,42,0.06)',
+    cursor: 'pointer', transition: 'transform 0.2s ease', border: '1px solid #f0f4f2'
   },
   imageWrapper: { position: 'relative', flexShrink: 0 },
-  thumbnail: { width: '70px', height: '70px', borderRadius: '14px', objectFit: 'cover' },
-  imageOverlay: { position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.4)', borderRadius: '14px', display: 'flex', justifyContent: 'center', alignItems: 'center' },
+  thumbnail: { width: '80px', height: '80px', borderRadius: '16px', objectFit: 'cover' },
+  badge: { 
+    position: 'absolute', bottom: '-8px', right: '-8px', background: '#2d6a4f', 
+    color: '#fff', fontSize: '10px', padding: '4px 8px', borderRadius: '10px', 
+    fontWeight: 'bold', border: '2px solid #fff' 
+  },
   content: { flex: 1, minWidth: 0 },
-  row: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' },
-  plantTitle: { margin: 0, color: '#1a3a2a', fontSize: '16px', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  miniScore: { fontSize: '10px', background: '#f0faf4', color: '#52b788', padding: '2px 6px', borderRadius: '6px', fontWeight: 'bold' },
-  footer: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  date: { fontSize: '12px', color: '#8aaa96' },
-  statusBadge: { fontSize: '11px', padding: '4px 10px', borderRadius: '20px', fontWeight: '600', letterSpacing: '0.3px' },
-  emptyText: { textAlign: 'center', color: '#8aaa96', marginTop: '40px' }
+  row: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' },
+  plantTitle: { margin: 0, color: '#1a3a2a', fontSize: '17px', fontWeight: '600' },
+  timestamp: { fontSize: '12px', color: '#9aaa96' },
+  scientificName: { fontSize: '13px', color: '#6a8378', marginBottom: '8px', fontStyle: 'italic' },
+  statusRow: { display: 'flex', alignItems: 'center', gap: '6px' },
+  statusDot: { width: '8px', height: '8px', borderRadius: '50%' },
+  statusText: { fontSize: '12px', fontWeight: '500', color: '#4a6358' },
+  chevron: { fontSize: '24px', color: '#cbdad2', marginLeft: '8px' },
+  emptyText: { textAlign: 'center', color: '#9aaa96', marginTop: '40px' }
 }
