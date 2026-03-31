@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
-// Initialize Supabase client using environment variables
-const supabaseUrl = typeof window !== 'undefined' ? (import.meta.env.VITE_SUPABASE_URL || '') : '';
-const supabaseAnonKey = typeof window !== 'undefined' ? (import.meta.env.VITE_SUPABASE_ANON_KEY || '') : '';
-
+// Initialize Supabase client
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-export default function ResultsScreen({ result, onReset }) {
+export default function ResultsScreen({ result, onReset, onBack }) {
   const [feedbackStatus, setFeedbackStatus] = useState(null);
 
   const healthColor = result?.HealthColor 
@@ -130,6 +129,10 @@ export default function ResultsScreen({ result, onReset }) {
           Scan another plant
         </button>
 
+        <button style={styles.backBtn} onClick={onBack}>
+          ← Back to History
+        </button>
+
         <p style={styles.disclaimer}>
           AI-generated diagnosis. Always consult a plant specialist for serious issues.
         </p>
@@ -190,6 +193,7 @@ const styles = {
   feedbackButtons: { display: 'flex', justifyContent: 'center', gap: '16px' },
   fbBtn: { padding: '8px 16px', background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', cursor: 'pointer', fontSize: '14px' },
   feedbackThanks: { fontSize: '14px', color: '#2d6a4f', fontWeight: '600', fontStyle: 'italic' },
-  resetBtn: { width: '100%', padding: '16px', background: '#2d6a4f', color: '#fff', border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: '500', cursor: 'pointer', marginTop: '8px', marginBottom: '16px' },
+  resetBtn: { width: '100%', padding: '16px', background: '#2d6a4f', color: '#fff', border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: '500', cursor: 'pointer', marginTop: '8px', marginBottom: '12px' },
+  backBtn: { width: '100%', padding: '12px', background: 'transparent', color: '#2d6a4f', border: '1px solid #2d6a4f', borderRadius: '12px', fontSize: '14px', fontWeight: '500', cursor: 'pointer', marginBottom: '16px' },
   disclaimer: { fontSize: '11px', color: '#8aaa96', textAlign: 'center', lineHeight: '1.5' },
 };
