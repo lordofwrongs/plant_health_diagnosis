@@ -61,7 +61,11 @@ export default function App() {
           <AnalysingScreen logId={activeLogId} onResultReady={handleResultReady} />
         )}
         {screen === 'results' && (
-          <ResultsScreen result={result} onReset={handleReset} />
+          <ResultsScreen 
+            result={result} 
+            onReset={handleReset} 
+            onBack={() => setScreen('history')} 
+          />
         )}
         {screen === 'history' && (
           <HistoryScreen onSelectResult={(data) => {
