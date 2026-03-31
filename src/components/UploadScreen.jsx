@@ -22,6 +22,30 @@ export default function UploadScreen({ onUploadComplete }) {
     if (files.length === 0) return
     setUploading(true)
     setError(null)
+
+    // Attempt to get high-accuracy GPS location
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords
+        await proceedWithUpload(latitude, longitude, null)
+      },
+      async () => {
+        // Fallback: If GPS is denied/unavailable, get City/Region via IP
+        try {
+          const response = await fetch('https://ipapi.co/json/')
+          const data = await response.json()
+          const cityString = data.city && data.region ? `${data.city}, ${data.region}` : null
+          await proceedWithUpload(null, null, cityString)
+        } catch (err) {
+          console.warn("Location fallback failed")
+          await proceedWithUpload(null, null, null)
+        }
+      },
+      { timeout: 8000 }
+    )
+  }
+
+  const proceedWithUpload = async (lat, lng, locName) => {
     const guestId = localStorage.getItem('plant_care_guest_id')
     const createdIds = []
 
@@ -40,13 +64,22 @@ export default function UploadScreen({ onUploadComplete }) {
 
         const { data: logData, error: insertError } = await supabase
           .from('plant_logs')
-          .insert({ user_id: guestId, image_url: imageUrl, status: 'pending' })
+          .insert({ 
+            user_id: guestId, 
+            image_url: imageUrl, 
+            status: 'pending',
+            latitude: lat,
+            longitude: lng,
+            location_name: locName
+          })
           .select('id').single()
+
         if (insertError) throw insertError
         createdIds.push(logData.id)
       }
       onUploadComplete(createdIds)
     } catch (err) {
+      console.error(err)
       setError('Upload failed. Please try again.')
       setUploading(false)
     }
@@ -56,12 +89,12 @@ export default function UploadScreen({ onUploadComplete }) {
     <div style={styles.page}>
       <div style={styles.header}>
         <div style={styles.logo}><LeafIcon /><span style={styles.logoText}>PlantCare</span></div>
-        <p style={styles.tagline}>AI-powered plant health diagnosis</p>
+        <p style={styles.tagline}>Local expert plant health diagnosis</p>
       </div>
 
       <div style={styles.card}>
         <h2 style={styles.cardTitle}>Scan your plants</h2>
-        <p style={styles.cardSubtitle}>Upload photos for individual AI analysis.</p>
+        <p style={styles.cardSubtitle}>Photos will be analyzed based on your local climate.</p>
 
         <div style={{ ...styles.dropZone, ...(previews.length > 0 ? styles.dropZoneWithImage : {}) }}
              onClick={() => previews.length === 0 && inputRef.current.click()}>
@@ -74,7 +107,7 @@ export default function UploadScreen({ onUploadComplete }) {
             <div style={styles.dropContent}>
               <div style={styles.uploadIcon}><CameraIcon /></div>
               <p style={styles.dropText}>Tap to take photos or upload</p>
-              <p style={styles.dropSubtext}>Multiple images supported</p>
+              <p style={styles.dropSubtext}>Location context will be added automatically</p>
             </div>
           )}
         </div>
@@ -84,7 +117,7 @@ export default function UploadScreen({ onUploadComplete }) {
 
         <button style={{ ...styles.submitBtn, ...((files.length === 0 || uploading) ? styles.submitBtnDisabled : {}) }}
                 onClick={handleSubmit} disabled={files.length === 0 || uploading}>
-          {uploading ? 'Processing...' : files.length > 1 ? `Analyse ${files.length} Plants` : 'Analyse Plant'}
+          {uploading ? 'Gathering Context...' : files.length > 1 ? `Analyse ${files.length} Plants` : 'Analyse Plant'}
         </button>
       </div>
       <div style={styles.bottomDecor}><SmallLeaf delay="0s" /><SmallLeaf delay="0.3s" /><SmallLeaf delay="0.6s" /></div>
@@ -92,7 +125,6 @@ export default function UploadScreen({ onUploadComplete }) {
   )
 }
 
-// Icons and Styles Omitted for space - Use the styles provided in the previous step.
 const styles = {
   page: { minHeight: 'calc(100vh - 60px)', background: 'linear-gradient(160deg, #f0faf4 0%, #faf8f3 60%, #e8f5e9 100%)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 20px' },
   header: { textAlign: 'center', marginBottom: '32px' },
@@ -109,6 +141,7 @@ const styles = {
   changeBtn: { gridColumn: '1/-1', marginTop: '10px', background: 'none', border: '1px solid #ddd', borderRadius: '20px', padding: '5px 15px', fontSize: '12px', cursor: 'pointer' },
   submitBtn: { width: '100%', padding: '16px', background: 'linear-gradient(135deg, #2d6a4f, #52b788)', color: '#fff', border: 'none', borderRadius: '12px', cursor: 'pointer', fontWeight: '600' },
   submitBtnDisabled: { opacity: 0.5, cursor: 'not-allowed' },
+  error: { color: '#c62828', fontSize: '12px', marginTop: '10px', textAlign: 'center' },
   bottomDecor: { display: 'flex', gap: '16px', marginTop: '32px' }
 }
 
