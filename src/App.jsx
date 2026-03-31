@@ -5,11 +5,10 @@ import ResultsScreen from './components/ResultsScreen.jsx'
 import HistoryScreen from './components/HistoryScreen.jsx'
 
 export default function App() {
-  const [screen, setScreen] = useState('upload') // 'upload' | 'analysing' | 'results' | 'history'
+  const [screen, setScreen] = useState('upload') 
   const [activeLogId, setActiveLogId] = useState(null)
   const [result, setResult] = useState(null)
 
-  // Initialize a Guest ID for history tracking
   useEffect(() => {
     if (!localStorage.getItem('plant_care_guest_id')) {
       localStorage.setItem('plant_care_guest_id', `guest_${Math.random().toString(36).slice(2, 11)}`)
@@ -21,6 +20,7 @@ export default function App() {
       setActiveLogId(ids[0])
       setScreen('analysing')
     } else {
+      // For multiple images, go to history so they can see progress
       setScreen('history')
     }
   }
@@ -39,25 +39,37 @@ export default function App() {
   return (
     <div style={styles.appContainer}>
       <nav style={styles.nav}>
-        <button onClick={handleReset} style={styles.navLink}>Scan</button>
-        <button onClick={() => setScreen('history')} style={styles.navLink}>History</button>
+        <button 
+          onClick={handleReset} 
+          style={{...styles.navLink, borderBottom: screen === 'upload' ? '2px solid #2d6a4f' : 'none'}}
+        >
+          Scan
+        </button>
+        <button 
+          onClick={() => setScreen('history')} 
+          style={{...styles.navLink, borderBottom: screen === 'history' ? '2px solid #2d6a4f' : 'none'}}
+        >
+          History
+        </button>
       </nav>
 
-      {screen === 'upload' && (
-        <UploadScreen onUploadComplete={handleUploadComplete} />
-      )}
-      {screen === 'analysing' && (
-        <AnalysingScreen logId={activeLogId} onResultReady={handleResultReady} />
-      )}
-      {screen === 'results' && (
-        <ResultsScreen result={result} onReset={handleReset} />
-      )}
-      {screen === 'history' && (
-        <HistoryScreen onSelectResult={(data) => {
-          setResult(data)
-          setScreen('results')
-        }} />
-      )}
+      <main style={styles.mainContent}>
+        {screen === 'upload' && (
+          <UploadScreen onUploadComplete={handleUploadComplete} />
+        )}
+        {screen === 'analysing' && (
+          <AnalysingScreen logId={activeLogId} onResultReady={handleResultReady} />
+        )}
+        {screen === 'results' && (
+          <ResultsScreen result={result} onReset={handleReset} />
+        )}
+        {screen === 'history' && (
+          <HistoryScreen onSelectResult={(data) => {
+            setResult(data)
+            setScreen('results')
+          }} />
+        )}
+      </main>
     </div>
   )
 }
@@ -67,13 +79,25 @@ const styles = {
   nav: { 
     display: 'flex', 
     justifyContent: 'center', 
-    gap: '30px', 
-    padding: '15px', 
+    gap: '40px', 
+    padding: '0 15px', 
     background: '#fff', 
     borderBottom: '1px solid #e8f5e9',
     position: 'sticky',
     top: 0,
-    zIndex: 10
+    zIndex: 10,
+    height: '60px'
   },
-  navLink: { background: 'none', border: 'none', color: '#2d6a4f', fontWeight: '600', cursor: 'pointer', fontSize: '14px' }
+  navLink: { 
+    background: 'none', 
+    border: 'none', 
+    color: '#2d6a4f', 
+    fontWeight: '600', 
+    cursor: 'pointer', 
+    fontSize: '14px',
+    height: '100%',
+    padding: '0 10px',
+    transition: 'all 0.2s'
+  },
+  mainContent: { flex: 1, display: 'flex', flexDirection: 'column' }
 }
