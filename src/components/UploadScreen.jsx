@@ -9,6 +9,8 @@ export default function UploadScreen({ onUploadComplete }) {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState(null)
   const inputRef = useRef()
+  // This ref acts as a "lock" to prevent double-submission
+  const isProcessing = useRef(false)
 
   const handleFiles = (fileList) => {
     const selectedFiles = Array.from(fileList).filter(f => f.type.startsWith('image/'))
@@ -19,7 +21,10 @@ export default function UploadScreen({ onUploadComplete }) {
   }
 
   const handleSubmit = async () => {
-    if (files.length === 0) return
+    // If we are already uploading or processing, stop immediately
+    if (files.length === 0 || uploading || isProcessing.current) return
+    
+    isProcessing.current = true
     setUploading(true)
     setError(null)
 
@@ -57,6 +62,7 @@ export default function UploadScreen({ onUploadComplete }) {
         const { error: uploadError } = await supabase.storage
           .from(BUCKET)
           .upload(fileName, file, { contentType: file.type })
+        
         if (uploadError) throw uploadError
 
         const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(fileName)
@@ -81,7 +87,10 @@ export default function UploadScreen({ onUploadComplete }) {
     } catch (err) {
       console.error(err)
       setError('Upload failed. Please try again.')
+    } finally {
+      // Release the lock and hide loading state regardless of success or failure
       setUploading(false)
+      isProcessing.current = false
     }
   }
 
@@ -97,11 +106,15 @@ export default function UploadScreen({ onUploadComplete }) {
         <p style={styles.cardSubtitle}>Photos will be analyzed based on your local climate.</p>
 
         <div style={{ ...styles.dropZone, ...(previews.length > 0 ? styles.dropZoneWithImage : {}) }}
-             onClick={() => previews.length === 0 && inputRef.current.click()}>
+             onClick={() => previews.length === 0 && !uploading && inputRef.current.click()}>
           {previews.length > 0 ? (
             <div style={styles.previewGrid}>
               {previews.map((src, i) => <img key={i} src={src} style={styles.miniPreview} alt="Preview" />)}
-              <button style={styles.changeBtn} onClick={(e) => { e.stopPropagation(); inputRef.current.click() }}>Add/Change</button>
+              {!uploading && (
+                <button style={styles.changeBtn} onClick={(e) => { e.stopPropagation(); inputRef.current.click() }}>
+                  Add/Change
+                </button>
+              )}
             </div>
           ) : (
             <div style={styles.dropContent}>
