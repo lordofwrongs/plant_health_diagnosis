@@ -14,14 +14,16 @@ export default function HistoryScreen({ onSelectResult }) {
       .order('created_at', { ascending: false })
 
     if (!error && data) {
-      // GROUPING LOGIC: Organizes flat logs into plant "identities"
+      // GROUPING LOGIC: Groups by Nickname first, then PlantName, then ID
       const grouped = data.reduce((acc, log) => {
-        // Use nickname as the ID, or "Uncategorized" if null
-        const key = log.plant_nickname || `Uncategorized-${log.id}`;
+        // Use PlantName as the key if nickname is missing to prevent "New Discovery" duplicates
+        const identity = log.plant_nickname || log.PlantName || 'Identifying...';
+        const key = identity;
+
         if (!acc[key]) {
           acc[key] = {
             id: key,
-            nickname: log.plant_nickname || 'New Discovery',
+            nickname: log.plant_nickname || log.PlantName || 'New Discovery',
             plantName: log.PlantName || 'Identifying...',
             latestTimestamp: log.created_at,
             latestImage: log.image_url,
@@ -29,7 +31,16 @@ export default function HistoryScreen({ onSelectResult }) {
             scans: []
           };
         }
+        
         acc[key].scans.push(log);
+
+        // Ensure the card always reflects the most recent scan data in the group
+        if (new Date(log.created_at) > new Date(acc[key].latestTimestamp)) {
+          acc[key].latestTimestamp = log.created_at;
+          acc[key].latestImage = log.image_url;
+          acc[key].latestStatus = log.HealthStatus;
+        }
+
         return acc;
       }, {});
 
@@ -80,7 +91,10 @@ export default function HistoryScreen({ onSelectResult }) {
                 </div>
                 <p style={styles.scientificName}>{group.plantName}</p>
                 <div style={styles.statusRow}>
-                  <div style={{ ...styles.statusDot, background: group.latestStatus?.toLowerCase().includes('healthy') ? '#4CAF50' : '#FF9800' }} />
+                  <div style={{ 
+                    ...styles.statusDot, 
+                    background: group.latestStatus?.toLowerCase().includes('healthy') ? '#4CAF50' : '#FF9800' 
+                  }} />
                   <span style={styles.statusText}>{group.latestStatus || 'Processing...'}</span>
                 </div>
               </div>
