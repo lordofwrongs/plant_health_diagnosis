@@ -9,7 +9,7 @@ export default function UploadScreen({ onUploadComplete }) {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState(null)
   const inputRef = useRef()
-  // This ref acts as a "lock" to prevent double-submission
+  // Prevents double-taps on the button
   const isProcessing = useRef(false)
 
   const handleFiles = (fileList) => {
@@ -21,33 +21,39 @@ export default function UploadScreen({ onUploadComplete }) {
   }
 
   const handleSubmit = async () => {
-    // If we are already uploading or processing, stop immediately
     if (files.length === 0 || uploading || isProcessing.current) return
     
     isProcessing.current = true
     setUploading(true)
     setError(null)
 
-    // Attempt to get high-accuracy GPS location
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords
-        await proceedWithUpload(latitude, longitude, null)
-      },
-      async () => {
-        // Fallback: If GPS is denied/unavailable, get City/Region via IP
-        try {
-          const response = await fetch('https://ipapi.co/json/')
-          const data = await response.json()
-          const cityString = data.city && data.region ? `${data.city}, ${data.region}` : null
-          await proceedWithUpload(null, null, cityString)
-        } catch (err) {
-          console.warn("Location fallback failed")
-          await proceedWithUpload(null, null, null)
-        }
-      },
-      { timeout: 8000 }
-    )
+    let lat = null
+    let lng = null
+    let locName = null
+
+    try {
+      // 1. Wrap Geolocation in a Promise to ensure sequential execution
+      const position = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, { 
+          timeout: 6000, 
+          enableHighAccuracy: false 
+        })
+      })
+      lat = position.coords.latitude
+      lng = position.coords.longitude
+    } catch (geoErr) {
+      // 2. Fallback: IP-based location if GPS fails or is denied
+      try {
+        const response = await fetch('https://ipapi.co/json/')
+        const data = await response.json()
+        locName = data.city && data.region ? `${data.city}, ${data.region}` : null
+      } catch (ipErr) {
+        console.warn("Location services unavailable")
+      }
+    }
+
+    // 3. Trigger the upload exactly once with the gathered context
+    await proceedWithUpload(lat, lng, locName)
   }
 
   const proceedWithUpload = async (lat, lng, locName) => {
@@ -59,6 +65,7 @@ export default function UploadScreen({ onUploadComplete }) {
         const ext = file.name.split('.').pop()
         const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
 
+        // Upload to Storage
         const { error: uploadError } = await supabase.storage
           .from(BUCKET)
           .upload(fileName, file, { contentType: file.type })
@@ -68,6 +75,7 @@ export default function UploadScreen({ onUploadComplete }) {
         const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(fileName)
         const imageUrl = urlData.publicUrl
 
+        // Create Database Record
         const { data: logData, error: insertError } = await supabase
           .from('plant_logs')
           .insert({ 
@@ -88,7 +96,6 @@ export default function UploadScreen({ onUploadComplete }) {
       console.error(err)
       setError('Upload failed. Please try again.')
     } finally {
-      // Release the lock and hide loading state regardless of success or failure
       setUploading(false)
       isProcessing.current = false
     }
