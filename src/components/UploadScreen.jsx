@@ -9,7 +9,6 @@ export default function UploadScreen({ onUploadComplete }) {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState(null)
   const inputRef = useRef()
-  // Prevents double-taps on the button
   const isProcessing = useRef(false)
 
   const handleFiles = (fileList) => {
@@ -32,17 +31,21 @@ export default function UploadScreen({ onUploadComplete }) {
     let locName = null
 
     try {
-      // 1. Wrap Geolocation in a Promise to ensure sequential execution
+      // 1. Force a high-accuracy check with a slightly longer timeout (10s)
+      // This is more likely to trigger the actual GPS hardware
       const position = await new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, { 
-          timeout: 6000, 
-          enableHighAccuracy: false 
+          timeout: 10000, 
+          enableHighAccuracy: true,
+          maximumAge: 0 // Force fresh location
         })
       })
       lat = position.coords.latitude
       lng = position.coords.longitude
+      console.log("GPS Location acquired:", lat, lng)
     } catch (geoErr) {
-      // 2. Fallback: IP-based location if GPS fails or is denied
+      console.warn("GPS failed, trying IP fallback:", geoErr.message)
+      // 2. Fallback: IP-based location
       try {
         const response = await fetch('https://ipapi.co/json/')
         const data = await response.json()
@@ -52,7 +55,6 @@ export default function UploadScreen({ onUploadComplete }) {
       }
     }
 
-    // 3. Trigger the upload exactly once with the gathered context
     await proceedWithUpload(lat, lng, locName)
   }
 
@@ -65,7 +67,6 @@ export default function UploadScreen({ onUploadComplete }) {
         const ext = file.name.split('.').pop()
         const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
 
-        // Upload to Storage
         const { error: uploadError } = await supabase.storage
           .from(BUCKET)
           .upload(fileName, file, { contentType: file.type })
@@ -75,7 +76,6 @@ export default function UploadScreen({ onUploadComplete }) {
         const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(fileName)
         const imageUrl = urlData.publicUrl
 
-        // Create Database Record
         const { data: logData, error: insertError } = await supabase
           .from('plant_logs')
           .insert({ 
