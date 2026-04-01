@@ -5,18 +5,32 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-export default function ResultsScreen({ result, onReset, onBack, allScans = [] }) {
+// PROFESSIONAL CHANGE: Destructure userLanguage from props
+export default function ResultsScreen({ result, userLanguage, onReset, onBack, allScans = [] }) {
   const [feedbackStatus, setFeedbackStatus] = useState(null);
 
-  // COMPARATIVE LOGIC: Find the previous scan in the timeline for this specific plant
+  // LOGIC: Get the correct name based on the current toggle setting
+  const getDynamicName = () => {
+    if (!result) return 'New Discovery';
+    
+    const meta = result.vernacular_metadata;
+    const currentLangKey = userLanguage?.toLowerCase();
+
+    // If we have metadata for the selected language, show it + English in parens
+    if (meta && meta[currentLangKey] && currentLangKey !== 'english') {
+      return `${meta[currentLangKey]} (${meta.english || result.PlantName})`;
+    }
+
+    // Fallback to the default PlantName (English)
+    return result.PlantName || 'New Discovery';
+  };
+
   const previousScan = allScans.length > 1 ? allScans[1] : null;
 
-  // Dynamic styling based on health status
   const healthColor = result?.HealthColor 
     ? { bg: `${result.HealthColor}15`, text: result.HealthColor, dot: result.HealthColor }
     : { bg: '#f0f4f2', text: '#2d6a4f', dot: '#52b788' };
 
-  // Helper to split CarePlan into clean bullet points
   const recommendations = result?.CarePlan 
     ? result.CarePlan.split('\n').filter(line => line.trim() !== '') 
     : [];
@@ -45,13 +59,11 @@ export default function ResultsScreen({ result, onReset, onBack, allScans = [] }
   return (
     <div style={styles.page}>
       <div style={styles.wrapper}>
-        {/* Navigation */}
         <div style={styles.navRow}>
           <button onClick={onBack} style={styles.backBtn}>← My Garden</button>
           <button onClick={onReset} style={styles.newScanBtn}>New Scan</button>
         </div>
 
-        {/* 1. PROFESSIONAL WEATHER ALERT (High Priority) */}
         {result?.WeatherAlert && (
           <div style={styles.weatherAlertCard}>
             <div style={styles.alertIcon}>⚠️</div>
@@ -62,7 +74,6 @@ export default function ResultsScreen({ result, onReset, onBack, allScans = [] }
           </div>
         )}
 
-        {/* 2. IDENTITY & TREND HEADER */}
         <div style={styles.mainCard}>
           <div style={styles.imageSection}>
             <img src={result?.image_url} alt="Scanned plant" style={styles.mainImage} />
@@ -74,7 +85,8 @@ export default function ResultsScreen({ result, onReset, onBack, allScans = [] }
 
           <div style={styles.infoSection}>
             <div style={styles.titleRow}>
-              <h1 style={styles.plantName}>{result?.PlantName || 'New Discovery'}</h1>
+              {/* FIX: Use the dynamic name getter here */}
+              <h1 style={styles.plantName}>{getDynamicName()}</h1>
               {previousScan && (
                 <div style={styles.trendChip}>
                   {result?.HealthStatus === previousScan?.HealthStatus ? 'Stable' : 'Status Updated'}
@@ -86,7 +98,6 @@ export default function ResultsScreen({ result, onReset, onBack, allScans = [] }
           </div>
         </div>
 
-        {/* 3. HEALTH JOURNEY (Comparative Analysis) */}
         {previousScan && (
           <div style={styles.sectionCard}>
             <h3 style={styles.sectionTitle}>Health Journey</h3>
@@ -113,26 +124,23 @@ export default function ResultsScreen({ result, onReset, onBack, allScans = [] }
           </div>
         )}
 
-        {/* 4. ANALYSIS SECTION */}
         <div style={styles.sectionCard}>
           <h3 style={styles.sectionTitle}>Visual Analysis</h3>
           <p style={styles.analysisBody}>{result?.VisualAnalysis}</p>
         </div>
 
-        {/* 5. CARE PLAN SECTION */}
         <div style={styles.sectionCard}>
           <h3 style={styles.sectionTitle}>Care Recommendations</h3>
           <div style={styles.remedyList}>
             {recommendations.map((step, i) => (
               <div key={i} style={styles.remedyItem}>
                 <div style={styles.remedyIndex}>{i + 1}</div>
-                <p style={styles.remedyText}>{step.replace('•', '').trim()}</p>
+                <p style={styles.remedyText}>{step.replace('•', '').replace('•', '').trim()}</p>
               </div>
             ))}
           </div>
         </div>
 
-        {/* 6. EXPERT TIP */}
         {result?.ExpertTip && (
           <div style={styles.expertTipBox}>
             <span style={styles.tipLabel}>PRO TIP</span>
@@ -140,7 +148,6 @@ export default function ResultsScreen({ result, onReset, onBack, allScans = [] }
           </div>
         )}
 
-        {/* 7. FEEDBACK LOOP */}
         <div style={styles.feedbackContainer}>
           {feedbackStatus ? (
             <p style={styles.feedbackThanks}>Thank you for helping our AI learn! 🌱</p>
@@ -159,6 +166,7 @@ export default function ResultsScreen({ result, onReset, onBack, allScans = [] }
   );
 }
 
+// ... styles remain the same ...
 const styles = {
   page: { minHeight: '100vh', background: '#f8faf9', padding: '20px' },
   wrapper: { maxWidth: '500px', margin: '0 auto', paddingBottom: '40px' },
@@ -176,7 +184,7 @@ const styles = {
   statusDot: { width: '8px', height: '8px', borderRadius: '50%' },
   infoSection: { padding: '24px' },
   titleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' },
-  plantName: { margin: 0, fontSize: '26px', color: '#1a3a2a', fontFamily: "'Playfair Display', serif", flex: 1 },
+  plantName: { margin: 0, fontSize: '24px', color: '#1a3a2a', fontFamily: "'Playfair Display', serif", flex: 1, lineHeight: '1.2' },
   trendChip: { background: '#e8f5e9', color: '#2d6a4f', padding: '4px 12px', borderRadius: '20px', fontSize: '11px', fontWeight: '700', whiteSpace: 'nowrap' },
   scientificName: { margin: '4px 0 12px 0', fontSize: '16px', color: '#6a8378', fontStyle: 'italic' },
   accuracyTag: { display: 'inline-block', background: '#f0f4f2', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', color: '#2d6a4f', fontWeight: '700' },
