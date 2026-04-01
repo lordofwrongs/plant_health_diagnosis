@@ -1,19 +1,25 @@
 import React, { useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
-// Initialize Supabase client
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-export default function ResultsScreen({ result, onReset, onBack }) {
+export default function ResultsScreen({ result, onReset, onBack, allScans = [] }) {
   const [feedbackStatus, setFeedbackStatus] = useState(null);
 
+  // COMPARATIVE LOGIC: Find the previous scan in the timeline for this specific plant
+  const previousScan = allScans.length > 1 ? allScans[1] : null;
+
+  // Dynamic styling based on health status
   const healthColor = result?.HealthColor 
     ? { bg: `${result.HealthColor}15`, text: result.HealthColor, dot: result.HealthColor }
-    : getHealthColor(result?.HealthStatus);
+    : { bg: '#f0f4f2', text: '#2d6a4f', dot: '#52b788' };
 
-  const recommendations = parseList(result?.CarePlan || result?.recommendations);
+  // Helper to split CarePlan into clean bullet points
+  const recommendations = result?.CarePlan 
+    ? result.CarePlan.split('\n').filter(line => line.trim() !== '') 
+    : [];
 
   const handleFeedback = async (isCorrect) => {
     setFeedbackStatus(isCorrect ? 'correct' : 'incorrect');
@@ -39,161 +45,160 @@ export default function ResultsScreen({ result, onReset, onBack }) {
   return (
     <div style={styles.page}>
       <div style={styles.wrapper}>
-        <div style={styles.header}>
-          <div style={styles.logo}>
-            <LeafIcon />
-            <span style={styles.logoText}>PlantCare</span>
-          </div>
+        {/* Navigation */}
+        <div style={styles.navRow}>
+          <button onClick={onBack} style={styles.backBtn}>← My Garden</button>
+          <button onClick={onReset} style={styles.newScanBtn}>New Scan</button>
         </div>
 
-        <div style={styles.identityCard}>
-          {result?.image_url && (
-            <img src={result.image_url} alt="Your plant" style={styles.plantImage} />
-          )}
-          <div style={styles.identityInfo}>
-            <div style={styles.identityHeaderRow}>
-              <p style={styles.identityLabel}>Species Identified</p>
-              {result?.AccuracyScore && (
-                <div style={{
-                  ...styles.accuracyBadge,
-                  background: result.AccuracyScore > 80 ? '#e8f5e9' : '#fff3e0',
-                  color: result.AccuracyScore > 80 ? '#2e7d32' : '#e65100'
-                }}>
-                  {Math.round(result.AccuracyScore)}% Match
+        {/* 1. PROFESSIONAL WEATHER ALERT (High Priority) */}
+        {result?.WeatherAlert && (
+          <div style={styles.weatherAlertCard}>
+            <div style={styles.alertIcon}>⚠️</div>
+            <div style={styles.alertContent}>
+              <h4 style={styles.alertTitle}>Climate Protection Alert</h4>
+              <p style={styles.alertText}>{result.WeatherAlert}</p>
+            </div>
+          </div>
+        )}
+
+        {/* 2. IDENTITY & TREND HEADER */}
+        <div style={styles.mainCard}>
+          <div style={styles.imageSection}>
+            <img src={result?.image_url} alt="Scanned plant" style={styles.mainImage} />
+            <div style={{ ...styles.healthBadge, backgroundColor: healthColor.bg, color: healthColor.text }}>
+              <div style={{ ...styles.statusDot, backgroundColor: healthColor.dot }} />
+              {result?.HealthStatus || 'Analyzing...'}
+            </div>
+          </div>
+
+          <div style={styles.infoSection}>
+            <div style={styles.titleRow}>
+              <h1 style={styles.plantName}>{result?.PlantName || 'New Discovery'}</h1>
+              {previousScan && (
+                <div style={styles.trendChip}>
+                  {result?.HealthStatus === previousScan?.HealthStatus ? 'Stable' : 'Status Updated'}
                 </div>
               )}
             </div>
-            <h2 style={styles.plantName}>{result?.PlantName || 'Unknown plant'}</h2>
-            {result?.ScientificName && (
-              <p style={styles.scientificName}>{result.ScientificName}</p>
-            )}
-            <div style={{ ...styles.healthBadge, background: healthColor.bg, color: healthColor.text }}>
-              <span style={{ ...styles.healthDot, background: healthColor.dot }} />
-              {result?.HealthStatus || 'Assessment pending'}
-            </div>
+            <p style={styles.scientificName}>{result?.ScientificName}</p>
+            <div style={styles.accuracyTag}>AI Confidence: {result?.AccuracyScore}%</div>
           </div>
         </div>
 
-        {result?.VisualAnalysis && (
-          <div style={styles.section}>
-            <div style={styles.sectionHeader}>
-              <SearchIcon />
-              <h3 style={styles.sectionTitle}>Botanical Analysis</h3>
+        {/* 3. HEALTH JOURNEY (Comparative Analysis) */}
+        {previousScan && (
+          <div style={styles.sectionCard}>
+            <h3 style={styles.sectionTitle}>Health Journey</h3>
+            <div style={styles.comparisonGrid}>
+              <div style={styles.compItem}>
+                <span style={styles.compLabel}>Previous Scan</span>
+                <span style={styles.compValue}>
+                  {new Date(previousScan.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                </span>
+              </div>
+              <div style={styles.compItem}>
+                <span style={styles.compLabel}>Previous Health</span>
+                <span style={{ ...styles.compValue, color: previousScan.HealthColor || '#2d6a4f' }}>
+                  {previousScan.HealthStatus}
+                </span>
+              </div>
             </div>
-            <p style={styles.analysisText}>{result.VisualAnalysis}</p>
+            <div style={styles.timelineDivider} />
+            <p style={styles.trendNote}>
+              {result?.HealthStatus === previousScan?.HealthStatus 
+                ? "Plant conditions remain consistent with the last observation." 
+                : "A change in health status has been detected since your last scan."}
+            </p>
           </div>
         )}
 
-        {recommendations.length > 0 && (
-          <div style={styles.section}>
-            <div style={styles.sectionHeader}>
-              <RemedyIcon />
-              <h3 style={styles.sectionTitle}>Care Plan</h3>
-            </div>
-            <div style={styles.remediesList}>
-              {recommendations.map((rec, i) => (
-                <div key={i} style={styles.remedyItem}>
-                  <span style={styles.remedyNumber}>{i + 1}</span>
-                  <span style={styles.remedyText}>{rec.replace(/^•\s*/, '')}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* 4. ANALYSIS SECTION */}
+        <div style={styles.sectionCard}>
+          <h3 style={styles.sectionTitle}>Visual Analysis</h3>
+          <p style={styles.analysisBody}>{result?.VisualAnalysis}</p>
+        </div>
 
+        {/* 5. CARE PLAN SECTION */}
+        <div style={styles.sectionCard}>
+          <h3 style={styles.sectionTitle}>Care Recommendations</h3>
+          <div style={styles.remedyList}>
+            {recommendations.map((step, i) => (
+              <div key={i} style={styles.remedyItem}>
+                <div style={styles.remedyIndex}>{i + 1}</div>
+                <p style={styles.remedyText}>{step.replace('•', '').trim()}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 6. EXPERT TIP */}
         {result?.ExpertTip && (
           <div style={styles.expertTipBox}>
-            <div style={styles.sectionHeader}>
-              <BulbIcon />
-              <h3 style={{...styles.sectionTitle, color: '#1b5e20'}}>Pro Tip</h3>
-            </div>
+            <span style={styles.tipLabel}>PRO TIP</span>
             <p style={styles.tipText}>{result.ExpertTip}</p>
           </div>
         )}
 
+        {/* 7. FEEDBACK LOOP */}
         <div style={styles.feedbackContainer}>
-          <p style={styles.feedbackTitle}>Was this identification accurate?</p>
-          {!feedbackStatus ? (
-            <div style={styles.feedbackButtons}>
-              <button onClick={() => handleFeedback(true)} style={styles.fbBtn}>👍 Yes</button>
-              <button onClick={() => handleFeedback(false)} style={styles.fbBtn}>👎 No</button>
-            </div>
+          {feedbackStatus ? (
+            <p style={styles.feedbackThanks}>Thank you for helping our AI learn! 🌱</p>
           ) : (
-            <p style={styles.feedbackThanks}>
-              {feedbackStatus === 'correct' ? "Great! Glad we got it right." : "Thanks for the correction!"}
-            </p>
+            <>
+              <p style={styles.feedbackTitle}>Was this analysis accurate?</p>
+              <div style={styles.feedbackButtons}>
+                <button style={styles.fbBtn} onClick={() => handleFeedback(true)}>Yes, correct</button>
+                <button style={styles.fbBtn} onClick={() => handleFeedback(false)}>No, incorrect</button>
+              </div>
+            </>
           )}
         </div>
-
-        <button style={styles.resetBtn} onClick={onReset}>
-          Scan another plant
-        </button>
-
-        <button style={styles.backBtn} onClick={onBack}>
-          ← Back to History
-        </button>
-
-        <p style={styles.disclaimer}>
-          AI-generated diagnosis. Always consult a plant specialist for serious issues.
-        </p>
       </div>
     </div>
   );
 }
 
-// --- HELPER FUNCTIONS ---
-function parseList(val) {
-  if (!val) return [];
-  if (Array.isArray(val)) return val;
-  if (typeof val === 'string') return val.split(/[•\n;]+/).map(s => s.trim()).filter(Boolean);
-  return [];
-}
-
-function getHealthColor(health) {
-  const h = (health || '').toLowerCase();
-  if (h.includes('healthy')) return { bg: '#e8f5e9', text: '#1b5e20', dot: '#43a047' };
-  if (h.includes('deficient') || h.includes('risk') || h.includes('caution')) return { bg: '#fff8e1', text: '#e65100', dot: '#ffa000' };
-  return { bg: '#ffebee', text: '#b71c1c', dot: '#e53935' };
-}
-
-// --- ICONS ---
-function LeafIcon() { return <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 22C6 22 2 16 2 10C2 10 8 4 16 6C18 10 16 16 12 22Z" fill="#52b788" stroke="#2d6a4f" strokeWidth="1.5"/><path d="M12 22C12 22 9 16 11 10" stroke="#2d6a4f" strokeWidth="1.2" strokeLinecap="round"/></svg> }
-function SearchIcon() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2d6a4f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> }
-function RemedyIcon() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 22C6 22 2 16 2 10C2 10 8 4 16 6C18 10 16 16 12 22Z" fill="none" stroke="#2d6a4f" strokeWidth="1.8"/><path d="M9 12l2 2 4-4" stroke="#2d6a4f" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg> }
-function BulbIcon() { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffa000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18h6M10 22h4M15.09 14c.18-.14.37-.32.47-.52a4 4 0 1 0-7.12 0c.1.2.29.38.47.52C9.75 15.31 10 16.33 10 17h4c0-.67.25-1.69.91-3z"/></svg> }
-
 const styles = {
-  page: { minHeight: '100vh', background: 'linear-gradient(160deg, #f0faf4 0%, #faf8f3 60%, #e8f5e9 100%)', padding: '32px 20px 40px', display: 'flex', justifyContent: 'center' },
-  wrapper: { width: '100%', maxWidth: '440px' },
-  header: { display: 'flex', justifyContent: 'center', marginBottom: '24px' },
-  logo: { display: 'flex', alignItems: 'center', gap: '8px' },
-  logoText: { fontFamily: "serif", fontSize: '22px', fontWeight: '600', color: '#1a3a2a' },
-  identityCard: { background: '#fff', borderRadius: '20px', overflow: 'hidden', boxShadow: '0 8px 40px rgba(26,58,42,0.10)', marginBottom: '16px', border: '1px solid rgba(82,183,136,0.15)' },
-  plantImage: { width: '100%', height: '200px', objectFit: 'cover' },
-  identityInfo: { padding: '20px 24px' },
-  identityHeaderRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' },
-  identityLabel: { fontSize: '11px', textTransform: 'uppercase', color: '#8aaa96', fontWeight: '500' },
-  accuracyBadge: { padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700' },
-  plantName: { fontSize: '22px', fontWeight: '500', color: '#1a3a2a', marginBottom: '4px' },
-  scientificName: { fontSize: '14px', fontStyle: 'italic', color: '#52796f', marginBottom: '12px' },
-  healthBadge: { display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '6px 14px', borderRadius: '20px', fontSize: '13px', fontWeight: '600' },
-  healthDot: { width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0 },
-  section: { background: '#fff', borderRadius: '16px', padding: '20px 24px', marginBottom: '12px', boxShadow: '0 4px 20px rgba(26,58,42,0.06)', border: '1px solid rgba(82,183,136,0.10)' },
-  sectionHeader: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' },
-  sectionTitle: { fontSize: '15px', fontWeight: '600', color: '#1a3a2a' },
-  analysisText: { fontSize: '14px', color: '#4a6358', lineHeight: '1.6' },
-  remediesList: { display: 'flex', flexDirection: 'column', gap: '12px' },
-  remedyItem: { display: 'flex', alignItems: 'flex-start', gap: '12px' },
-  remedyNumber: { width: '22px', height: '22px', borderRadius: '50%', background: '#2d6a4f', color: '#fff', fontSize: '11px', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  remedyText: { fontSize: '14px', color: '#4a6358', lineHeight: '1.6' },
-  expertTipBox: { background: '#fff9c4', borderRadius: '16px', padding: '20px 24px', marginBottom: '20px', border: '1px solid #fff176' },
-  tipText: { fontSize: '14px', color: '#33691e', lineHeight: '1.6', fontWeight: '500' },
-  feedbackContainer: { textAlign: 'center', padding: '16px', marginBottom: '12px' },
-  feedbackTitle: { fontSize: '13px', color: '#52796f', marginBottom: '10px' },
-  feedbackButtons: { display: 'flex', justifyContent: 'center', gap: '16px' },
-  fbBtn: { padding: '8px 16px', background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', cursor: 'pointer', fontSize: '14px' },
-  feedbackThanks: { fontSize: '14px', color: '#2d6a4f', fontWeight: '600', fontStyle: 'italic' },
-  resetBtn: { width: '100%', padding: '16px', background: '#2d6a4f', color: '#fff', border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: '500', cursor: 'pointer', marginTop: '8px', marginBottom: '12px' },
-  backBtn: { width: '100%', padding: '12px', background: 'transparent', color: '#2d6a4f', border: '1px solid #2d6a4f', borderRadius: '12px', fontSize: '14px', fontWeight: '500', cursor: 'pointer', marginBottom: '16px' },
-  disclaimer: { fontSize: '11px', color: '#8aaa96', textAlign: 'center', lineHeight: '1.5' },
+  page: { minHeight: '100vh', background: '#f8faf9', padding: '20px' },
+  wrapper: { maxWidth: '500px', margin: '0 auto', paddingBottom: '40px' },
+  navRow: { display: 'flex', justifyContent: 'space-between', marginBottom: '20px' },
+  backBtn: { background: 'none', border: 'none', color: '#2d6a4f', fontWeight: '600', cursor: 'pointer' },
+  newScanBtn: { background: '#2d6a4f', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '20px', fontWeight: '600', cursor: 'pointer' },
+  weatherAlertCard: { display: 'flex', gap: '15px', background: '#fff4e5', border: '1px solid #ffe2b3', padding: '16px', borderRadius: '16px', marginBottom: '20px', alignItems: 'center' },
+  alertIcon: { fontSize: '24px' },
+  alertTitle: { margin: 0, fontSize: '14px', color: '#663c00', fontWeight: '700' },
+  alertText: { margin: '2px 0 0 0', fontSize: '13px', color: '#663c00', lineHeight: '1.4' },
+  mainCard: { background: '#fff', borderRadius: '24px', overflow: 'hidden', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', marginBottom: '20px' },
+  imageSection: { position: 'relative', height: '300px' },
+  mainImage: { width: '100%', height: '100%', objectFit: 'cover' },
+  healthBadge: { position: 'absolute', bottom: '16px', left: '16px', display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', borderRadius: '30px', fontSize: '14px', fontWeight: '700', backdropFilter: 'blur(10px)' },
+  statusDot: { width: '8px', height: '8px', borderRadius: '50%' },
+  infoSection: { padding: '24px' },
+  titleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' },
+  plantName: { margin: 0, fontSize: '26px', color: '#1a3a2a', fontFamily: "'Playfair Display', serif", flex: 1 },
+  trendChip: { background: '#e8f5e9', color: '#2d6a4f', padding: '4px 12px', borderRadius: '20px', fontSize: '11px', fontWeight: '700', whiteSpace: 'nowrap' },
+  scientificName: { margin: '4px 0 12px 0', fontSize: '16px', color: '#6a8378', fontStyle: 'italic' },
+  accuracyTag: { display: 'inline-block', background: '#f0f4f2', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', color: '#2d6a4f', fontWeight: '700' },
+  sectionCard: { background: '#fff', padding: '24px', borderRadius: '20px', marginBottom: '16px', border: '1px solid #f0f4f2' },
+  sectionTitle: { margin: '0 0 12px 0', fontSize: '15px', color: '#1a3a2a', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' },
+  analysisBody: { fontSize: '15px', color: '#4a6358', lineHeight: '1.6' },
+  comparisonGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '15px' },
+  compItem: { display: 'flex', flexDirection: 'column', gap: '4px' },
+  compLabel: { fontSize: '11px', color: '#8aaa96', fontWeight: '600' },
+  compValue: { fontSize: '14px', color: '#1a3a2a', fontWeight: '500' },
+  timelineDivider: { height: '1px', background: '#f0f4f2', marginBottom: '12px' },
+  trendNote: { fontSize: '13px', color: '#6a8378', margin: 0, fontStyle: 'italic' },
+  remedyList: { display: 'flex', flexDirection: 'column', gap: '16px' },
+  remedyItem: { display: 'flex', gap: '12px', alignItems: 'flex-start' },
+  remedyIndex: { width: '22px', height: '22px', background: '#2d6a4f', color: '#fff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', flexShrink: 0 },
+  remedyText: { margin: 0, fontSize: '14px', color: '#4a6358', lineHeight: '1.6' },
+  expertTipBox: { background: '#1b4332', padding: '24px', borderRadius: '24px', marginBottom: '20px' },
+  tipLabel: { background: '#52b788', color: '#fff', fontSize: '10px', padding: '2px 8px', borderRadius: '4px', fontWeight: '900', marginBottom: '10px', display: 'inline-block' },
+  tipText: { margin: 0, color: '#d8f3dc', fontSize: '14px', lineHeight: '1.6' },
+  feedbackContainer: { textAlign: 'center', padding: '20px' },
+  feedbackTitle: { fontSize: '14px', color: '#6a8378', marginBottom: '12px' },
+  feedbackButtons: { display: 'flex', justifyContent: 'center', gap: '12px' },
+  fbBtn: { padding: '10px 20px', background: '#fff', border: '1px solid #cbdad2', borderRadius: '12px', cursor: 'pointer', fontSize: '14px', color: '#2d6a4f', fontWeight: '600' },
+  feedbackThanks: { color: '#2d6a4f', fontWeight: '600' }
 };

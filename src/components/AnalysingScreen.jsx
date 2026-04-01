@@ -1,36 +1,41 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient.js'
 
-const POLL_INTERVAL = 3000 // 3 seconds
-const MAX_WAIT = 120000   // 2 minutes timeout
-
 export default function AnalysingScreen({ logId, onResultReady }) {
-  const startTime = useRef(Date.now())
+  const [currentStep, setCurrentStep] = useState(0)
 
   useEffect(() => {
-    const interval = setInterval(async () => {
-      // Timeout guard
-      if (Date.now() - startTime.current > MAX_WAIT) {
-        clearInterval(interval)
-        return
-      }
+    // 1. REAL-TIME SUBSCRIPTION: Listen for the specific record update
+    const channel = supabase
+      .channel(`log-monitor-${logId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'plant_logs',
+          filter: `id=eq.${logId}`
+        },
+        (payload) => {
+          // As soon as status changes to 'done', trigger the results
+          if (payload.new.status === 'done') {
+            onResultReady(payload.new)
+          }
+        }
+      )
+      .subscribe()
 
-      const { data, error } = await supabase
-        .from('plant_logs')
-        .select('*')
-        .eq('id', logId)
-        .single()
+    // 2. VISUAL PROGRESSION: Managed steps for better UX
+    // We move through steps 1-3 visually while waiting for the real data
+    const stepInterval = setInterval(() => {
+      setCurrentStep((prev) => (prev < 3 ? prev + 1 : prev))
+    }, 3500)
 
-      if (error || !data) return
-
-      // n8n writes back: status = 'done' and fills plant_name, health, issues, recommendations
-      if (data.status === 'done') {
-        clearInterval(interval)
-        onResultReady(data)
-      }
-    }, POLL_INTERVAL)
-
-    return () => clearInterval(interval)
+    // 3. CLEANUP: Kill the subscription and interval when component unmounts
+    return () => {
+      supabase.removeChannel(channel)
+      clearInterval(stepInterval)
+    }
   }, [logId, onResultReady])
 
   return (
@@ -52,12 +57,12 @@ export default function AnalysingScreen({ logId, onResultReady }) {
           Our AI is examining your plant for health issues, identifying the species, and preparing personalised recommendations.
         </p>
 
-        {/* Steps */}
+        {/* Steps with dynamic "done" states based on currentStep */}
         <div style={styles.steps}>
-          <Step label="Uploading image" done={true} delay="0s" />
-          <Step label="Identifying plant species" done={false} delay="0.8s" />
-          <Step label="Diagnosing health issues" done={false} delay="1.6s" />
-          <Step label="Preparing recommendations" done={false} delay="2.4s" />
+          <Step label="Uploading image" done={true} active={currentStep === 0} />
+          <Step label="Identifying plant species" done={currentStep >= 1} active={currentStep === 1} />
+          <Step label="Diagnosing health issues" done={currentStep >= 2} active={currentStep === 2} />
+          <Step label="Preparing recommendations" done={currentStep >= 3} active={currentStep === 3} />
         </div>
 
         <p style={styles.note}>This usually takes 15–30 seconds</p>
@@ -66,13 +71,21 @@ export default function AnalysingScreen({ logId, onResultReady }) {
   )
 }
 
-function Step({ label, done, delay }) {
+function Step({ label, done, active }) {
   return (
-    <div style={{ ...styles.step, animationDelay: delay }} className="fade-up-delay-1">
-      <div style={{ ...styles.stepDot, ...(done ? styles.stepDotDone : styles.stepDotPending) }}>
+    <div style={styles.step}>
+      <div style={{ 
+        ...styles.stepDot, 
+        ...(done ? styles.stepDotDone : styles.stepDotPending),
+        ...(active ? styles.stepDotActive : {})
+      }}>
         {done ? '✓' : ''}
       </div>
-      <span style={{ ...styles.stepLabel, ...(done ? styles.stepLabelDone : {}) }}>
+      <span style={{ 
+        ...styles.stepLabel, 
+        ...(done ? styles.stepLabelDone : {}),
+        ...(active ? styles.stepLabelActive : {})
+      }}>
         {label}
       </span>
     </div>
@@ -185,23 +198,35 @@ const styles = {
     fontSize: '12px',
     flexShrink: 0,
     fontWeight: '600',
+    transition: 'all 0.3s ease',
   },
   stepDotDone: {
     background: '#52b788',
     color: '#fff',
+    border: 'none',
+  },
+  stepDotActive: {
+    border: '2px solid #52b788',
+    background: 'rgba(82,183,136,0.1)',
+    animation: 'pulse 1.5s ease-in-out infinite',
   },
   stepDotPending: {
     background: 'transparent',
-    border: '2px solid #b7e4c7',
-    animation: 'pulse 1.5s ease-in-out infinite',
+    border: '2px solid #e8f5e9',
+    color: 'transparent'
   },
   stepLabel: {
     fontSize: '14px',
-    color: '#8aaa96',
+    color: '#cbdad2',
     fontWeight: '300',
+    transition: 'all 0.3s ease',
   },
   stepLabelDone: {
     color: '#2d6a4f',
+    fontWeight: '500',
+  },
+  stepLabelActive: {
+    color: '#52b788',
     fontWeight: '500',
   },
   note: {

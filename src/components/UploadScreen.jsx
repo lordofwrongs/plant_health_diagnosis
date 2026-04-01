@@ -3,10 +3,11 @@ import { supabase } from '../supabaseClient.js'
 
 const BUCKET = 'plant_images'
 
-export default function UploadScreen({ onUploadComplete }) {
+// PROFESSIONAL CHANGE: Destructure userLanguage from props
+export default function UploadScreen({ onUploadComplete, userLanguage }) {
   const [previews, setPreviews] = useState([])
   const [files, setFiles] = useState([])
-  const [nickname, setNickname] = useState('') // New state for Plant Nickname
+  const [nickname, setNickname] = useState('') 
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState(null)
   const [statusMessage, setStatusMessage] = useState('')
@@ -94,7 +95,9 @@ export default function UploadScreen({ onUploadComplete }) {
             latitude: context.lat,
             longitude: context.lng,
             location_name: context.name,
-            plant_nickname: nickname || null // New field sent to DB
+            plant_nickname: nickname || null,
+            // NEW: Send the user's language preference to the DB for the Edge Function
+            preferred_language: userLanguage || 'English'
           })
           .select('id').single()
 
@@ -121,10 +124,9 @@ export default function UploadScreen({ onUploadComplete }) {
       <div style={styles.card}>
         <h2 style={styles.cardTitle}>Analyze Health</h2>
         <p style={styles.cardSubtitle}>
-          Our AI uses local environmental data to diagnose your plant.
+          Our AI uses local environmental data and your preferred language ({userLanguage}) to diagnose your plant.
         </p>
 
-        {/* NEW: Plant Nickname Input Field */}
         <div style={styles.inputWrapper}>
           <label style={styles.label}>Identify this plant (optional)</label>
           <input 
