@@ -10,19 +10,21 @@ export default function App() {
   const [result, setResult] = useState(null)
   const [historyContext, setHistoryContext] = useState([])
   
-  // NEW: User Preferences State
+  // Initialize Preferences from LocalStorage
   const [preferences, setPreferences] = useState(() => {
     const saved = localStorage.getItem('plant_care_prefs')
     return saved ? JSON.parse(saved) : { language: 'English' }
   })
   const [showSettings, setShowSettings] = useState(false)
 
+  // Set Guest ID for tracking
   useEffect(() => {
     if (!localStorage.getItem('plant_care_guest_id')) {
       localStorage.setItem('plant_care_guest_id', `guest_${Math.random().toString(36).slice(2, 11)}`)
     }
   }, [])
 
+  // Sync Preferences to LocalStorage
   useEffect(() => {
     localStorage.setItem('plant_care_prefs', JSON.stringify(preferences))
   }, [preferences])
@@ -55,35 +57,40 @@ export default function App() {
         <div style={styles.navLinks}>
           <button 
             onClick={handleReset} 
-            style={{...styles.navLink, borderBottom: screen === 'upload' ? '2px solid #2d6a4f' : 'none'}}
+            style={{...styles.navLink, borderBottom: screen === 'upload' ? '3px solid #2d6a4f' : 'none'}}
           >
             Scan
           </button>
           <button 
             onClick={() => setScreen('history')} 
-            style={{...styles.navLink, borderBottom: screen === 'history' ? '2px solid #2d6a4f' : 'none'}}
+            style={{...styles.navLink, borderBottom: screen === 'history' ? '3px solid #2d6a4f' : 'none'}}
           >
             History
           </button>
         </div>
         
-        {/* Settings Toggle */}
+        {/* IMPROVED: High-Visibility Language Toggle */}
         <button onClick={() => setShowSettings(!showSettings)} style={styles.settingsToggle}>
-          {preferences.language === 'English' ? '🌐 EN' : `🌐 ${preferences.language.substring(0,2).toUpperCase()}`}
+          🌐 {preferences.language === 'English' ? 'EN' : preferences.language.substring(0, 2).toUpperCase()}
         </button>
       </nav>
 
+      {/* Language Selection Bar */}
       {showSettings && (
         <div style={styles.settingsBar}>
           <span style={styles.settingsLabel}>Preferred Language:</span>
           {['English', 'Hindi', 'Tamil', 'Telugu'].map(lang => (
             <button 
               key={lang}
-              onClick={() => { setPreferences({ ...preferences, language: lang }); setShowSettings(false); }}
+              onClick={() => { 
+                setPreferences({ ...preferences, language: lang }); 
+                setShowSettings(false); 
+              }}
               style={{
                 ...styles.langBtn,
-                background: preferences.language === lang ? '#2d6a4f' : 'transparent',
-                color: preferences.language === lang ? '#fff' : '#2d6a4f'
+                background: preferences.language === lang ? '#2d6a4f' : '#f0f4f2',
+                color: preferences.language === lang ? '#fff' : '#2d6a4f',
+                border: preferences.language === lang ? '1px solid #2d6a4f' : '1px solid #cbdad2'
               }}
             >
               {lang}
@@ -96,7 +103,7 @@ export default function App() {
         {screen === 'upload' && (
           <UploadScreen 
             onUploadComplete={handleUploadComplete} 
-            userLanguage={preferences.language} // Pass language to the upload flow
+            userLanguage={preferences.language} 
           />
         )}
         
@@ -126,20 +133,31 @@ export default function App() {
 }
 
 const styles = {
-  appContainer: { minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#f8faf9' },
+  appContainer: { 
+    minHeight: '100vh', 
+    display: 'flex', 
+    flexDirection: 'column', 
+    background: '#f8faf9',
+    fontFamily: 'Inter, system-ui, sans-serif'
+  },
   nav: { 
     display: 'flex', 
     justifyContent: 'space-between', 
     alignItems: 'center',
-    padding: '0 20px', 
+    padding: '0 24px', 
     background: '#fff', 
     borderBottom: '1px solid #e8f5e9',
     position: 'sticky',
     top: 0,
-    zIndex: 10,
-    height: '60px'
+    zIndex: 100,
+    height: '64px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
   },
-  navLinks: { display: 'flex', gap: '30px', height: '100%' },
+  navLinks: { 
+    display: 'flex', 
+    gap: '24px', 
+    height: '100%' 
+  },
   navLink: { 
     background: 'none', 
     border: 'none', 
@@ -149,36 +167,49 @@ const styles = {
     fontSize: '13px',
     textTransform: 'uppercase',
     letterSpacing: '1px',
-    padding: '0 5px',
-    transition: 'all 0.2s'
+    padding: '0 4px',
+    transition: 'all 0.2s',
+    display: 'flex',
+    alignItems: 'center'
   },
   settingsToggle: {
-    background: '#f0f4f2',
-    border: '1px solid #cbdad2',
-    borderRadius: '8px',
-    padding: '6px 12px',
-    fontSize: '11px',
+    background: '#2d6a4f',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: '20px',
+    padding: '8px 16px',
+    fontSize: '12px',
     fontWeight: '800',
-    color: '#2d6a4f',
-    cursor: 'pointer'
+    cursor: 'pointer',
+    boxShadow: '0 4px 12px rgba(45, 106, 79, 0.2)',
+    transition: 'transform 0.2s ease',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px'
   },
   settingsBar: {
     background: '#fff',
-    padding: '12px 20px',
+    padding: '16px 24px',
     borderBottom: '1px solid #e8f5e9',
     display: 'flex',
     alignItems: 'center',
-    gap: '10px',
-    flexWrap: 'wrap'
+    gap: '12px',
+    flexWrap: 'wrap',
+    animation: 'slideDown 0.3s ease-out'
   },
-  settingsLabel: { fontSize: '12px', fontWeight: '600', color: '#6a8378', marginRight: '10px' },
+  settingsLabel: { 
+    fontSize: '12px', 
+    fontWeight: '700', 
+    color: '#4a6358', 
+    marginRight: '8px' 
+  },
   langBtn: {
-    padding: '4px 12px',
-    borderRadius: '6px',
-    border: '1px solid #2d6a4f',
+    padding: '6px 16px',
+    borderRadius: '10px',
     fontSize: '12px',
+    fontWeight: '600',
     cursor: 'pointer',
-    transition: '0.2s'
+    transition: 'all 0.2s'
   },
   mainContent: { flex: 1, display: 'flex', flexDirection: 'column' }
 }
