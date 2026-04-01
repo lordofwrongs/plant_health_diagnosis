@@ -86,6 +86,7 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
         const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(fileName)
         const imageUrl = urlData.publicUrl
 
+        // MAPPING TO DATABASE: preferred_language added here
         const { data: logData, error: insertError } = await supabase
           .from('plant_logs')
           .insert({ 
@@ -96,7 +97,7 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
             longitude: context.lng,
             location_name: context.name,
             plant_nickname: nickname || null,
-            // NEW: Send the user's language preference to the DB for the Edge Function
+            // THIS LINE MAPS THE UI PREFERENCE TO THE DB COLUMN
             preferred_language: userLanguage || 'English'
           })
           .select('id').single()
@@ -124,7 +125,7 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
       <div style={styles.card}>
         <h2 style={styles.cardTitle}>Analyze Health</h2>
         <p style={styles.cardSubtitle}>
-          Our AI uses local environmental data and your preferred language ({userLanguage}) to diagnose your plant.
+          Our AI uses local environmental data and your preferred language <strong>({userLanguage})</strong> to diagnose your plant.
         </p>
 
         <div style={styles.inputWrapper}>
