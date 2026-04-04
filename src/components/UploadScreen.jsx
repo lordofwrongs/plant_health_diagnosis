@@ -3,7 +3,6 @@ import { supabase } from '../supabaseClient.js'
 
 const BUCKET = 'plant_images'
 
-// PROFESSIONAL CHANGE: Destructure userLanguage from props
 export default function UploadScreen({ onUploadComplete, userLanguage }) {
   const [previews, setPreviews] = useState([])
   const [files, setFiles] = useState([])
@@ -68,7 +67,7 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
     setError(null)
 
     const context = await getLocationContext()
-    setStatusMessage(`Uploading ${files.length} images...`)
+    setStatusMessage(`Uploading image...`)
     const guestId = localStorage.getItem('plant_care_guest_id')
     const createdIds = []
 
@@ -86,7 +85,6 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
         const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(fileName)
         const imageUrl = urlData.publicUrl
 
-        // MAPPING TO DATABASE: preferred_language added here
         const { data: logData, error: insertError } = await supabase
           .from('plant_logs')
           .insert({ 
@@ -97,7 +95,6 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
             longitude: context.lng,
             location_name: context.name,
             plant_nickname: nickname || null,
-            // THIS LINE MAPS THE UI PREFERENCE TO THE DB COLUMN
             preferred_language: userLanguage || 'English'
           })
           .select('id').single()
@@ -150,7 +147,7 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
               {previews.map((src, i) => <img key={i} src={src} style={styles.miniPreview} alt="Preview" />)}
               {!uploading && (
                 <button style={styles.changeBtn} onClick={(e) => { e.stopPropagation(); inputRef.current.click() }}>
-                  Replace Images
+                  Replace Image
                 </button>
               )}
             </div>
@@ -163,7 +160,15 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
           )}
         </div>
 
-        <input ref={inputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => handleFiles(e.target.files)} />
+        {/* PM FIX: Removed 'multiple' and added 'capture="environment"' to force Camera availability on Android */}
+        <input 
+          ref={inputRef} 
+          type="file" 
+          accept="image/*" 
+          capture="environment" 
+          style={{ display: 'none' }} 
+          onChange={(e) => handleFiles(e.target.files)} 
+        />
         
         {error && <div style={styles.errorContainer}>{error}</div>}
 
@@ -175,7 +180,7 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
           {uploading ? (
             <span style={styles.loaderText}>{statusMessage}</span>
           ) : (
-            files.length > 1 ? `Analyze ${files.length} Plants` : 'Analyze Plant'
+            'Analyze Plant'
           )}
         </button>
       </div>
