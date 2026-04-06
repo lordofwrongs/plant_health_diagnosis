@@ -1,27 +1,31 @@
-import React, { useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import React, { useState, useEffect } from 'react';
+import { supabase } from '../supabaseClient.js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-// PROFESSIONAL CHANGE: Destructure userLanguage from props
 export default function ResultsScreen({ result, userLanguage, onReset, onBack, allScans = [] }) {
   const [feedbackStatus, setFeedbackStatus] = useState(null);
 
-  // LOGIC: Get the correct name based on the current toggle setting
   const getDynamicName = () => {
     if (!result) return 'New Discovery';
     
     const meta = result.vernacular_metadata;
     const currentLangKey = userLanguage?.toLowerCase();
 
-    // If we have metadata for the selected language, show it + English in parens
-    if (meta && meta[currentLangKey] && currentLangKey !== 'english') {
-      return `${meta[currentLangKey]} (${meta.english || result.PlantName})`;
+    // 1. Return Standard if English
+    if (!currentLangKey || currentLangKey === 'english') {
+      return result.PlantName || 'New Discovery';
     }
 
-    // Fallback to the default PlantName (English)
+    // 2. Search Metadata
+    if (meta) {
+      // Find key matching 'tamil', 'hindi', etc.
+      const translation = Object.keys(meta).find(k => k.toLowerCase() === currentLangKey);
+      if (translation && meta[translation]) {
+        const englishReference = meta.english || result.PlantName;
+        return `${meta[translation]} (${englishReference})`;
+      }
+    }
+
+    // 3. Fallback
     return result.PlantName || 'New Discovery';
   };
 
@@ -38,18 +42,13 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
   const handleFeedback = async (isCorrect) => {
     setFeedbackStatus(isCorrect ? 'correct' : 'incorrect');
     let userCorrection = null;
-    
     if (!isCorrect) {
       userCorrection = window.prompt("What is the correct name of this plant? (Optional)");
     }
-
     try {
       await supabase
         .from('plant_logs')
-        .update({ 
-          IsCorrect: isCorrect,
-          UserCorrection: userCorrection 
-        })
+        .update({ IsCorrect: isCorrect, UserCorrection: userCorrection })
         .eq('id', result.id);
     } catch (err) {
       console.error("Feedback Error:", err);
@@ -85,7 +84,6 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
 
           <div style={styles.infoSection}>
             <div style={styles.titleRow}>
-              {/* FIX: Use the dynamic name getter here */}
               <h1 style={styles.plantName}>{getDynamicName()}</h1>
               {previousScan && (
                 <div style={styles.trendChip}>
@@ -135,7 +133,7 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
             {recommendations.map((step, i) => (
               <div key={i} style={styles.remedyItem}>
                 <div style={styles.remedyIndex}>{i + 1}</div>
-                <p style={styles.remedyText}>{step.replace('•', '').replace('•', '').trim()}</p>
+                <p style={styles.remedyText}>{step.replace(/[•*-]/g, '').trim()}</p>
               </div>
             ))}
           </div>
@@ -166,7 +164,6 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
   );
 }
 
-// ... styles remain the same ...
 const styles = {
   page: { minHeight: '100vh', background: '#f8faf9', padding: '20px' },
   wrapper: { maxWidth: '500px', margin: '0 auto', paddingBottom: '40px' },

@@ -80,7 +80,7 @@ export default function HistoryScreen({ onSelectResult }) {
             <div 
               key={group.id} 
               style={styles.card} 
-              // PROFESSIONAL CHANGE: Pass the full 'scans' array, not just the first one
+              // PASSING LOGIC: Scans[0] is the result, Scans array is the history
               onClick={() => onSelectResult(group.scans[0], group.scans)}
             >
               <div style={styles.imageWrapper}>

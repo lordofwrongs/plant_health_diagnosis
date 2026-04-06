@@ -17,45 +17,40 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
     const selectedFiles = Array.from(fileList).filter(f => f.type.startsWith('image/'))
     if (selectedFiles.length === 0) return
     
-    // Append new files to existing ones to support multiple "taps" of the camera
     setFiles(prev => [...prev, ...selectedFiles])
     setPreviews(prev => [...prev, ...selectedFiles.map(f => URL.createObjectURL(f))])
     setError(null)
   }
 
+  // --- Remove Individual Image Logic ---
+  const removeImage = (e, index) => {
+    e.stopPropagation(); 
+    setFiles(prev => prev.filter((_, i) => i !== index));
+    setPreviews(prev => {
+      URL.revokeObjectURL(prev[index]);
+      return prev.filter((_, i) => i !== index);
+    });
+  };
+
   const getLocationContext = async () => {
     setStatusMessage('Syncing with satellites...')
-    
     const ipFallback = async () => {
       try {
         const res = await fetch('https://ipapi.co/json/')
         const data = await res.json()
-        return {
-          lat: data.latitude,
-          lng: data.longitude,
-          name: `${data.city}, ${data.region}`
-        }
+        return { lat: data.latitude, lng: data.longitude, name: `${data.city}, ${data.region}` }
       } catch {
         return { lat: null, lng: null, name: 'Unknown Location' }
       }
     }
-
     try {
       const position = await new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 12000,
-          maximumAge: 0
+          enableHighAccuracy: true, timeout: 12000, maximumAge: 0
         })
       })
-      
-      return {
-        lat: position.coords.latitude,
-        lng: position.coords.longitude,
-        name: null 
-      }
+      return { lat: position.coords.latitude, lng: position.coords.longitude, name: null }
     } catch (err) {
-      console.warn("GPS timeout or denied, using IP fallback context")
       setStatusMessage('Using approximate location...')
       return await ipFallback()
     }
@@ -63,7 +58,6 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
 
   const handleSubmit = async () => {
     if (files.length === 0 || uploading || isProcessing.current) return
-    
     isProcessing.current = true
     setUploading(true)
     setError(null)
@@ -87,6 +81,9 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
         const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(fileName)
         const imageUrl = urlData.publicUrl
 
+        // DEBUG: Check what is being passed right before insertion
+        console.log("DEBUG: Storing record with language:", userLanguage);
+
         const { data: logData, error: insertError } = await supabase
           .from('plant_logs')
           .insert({ 
@@ -97,14 +94,14 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
             longitude: context.lng,
             location_name: context.name,
             plant_nickname: nickname || null,
-            preferred_language: userLanguage || 'English'
+            // CRITICAL FIX: Explicitly mapping the prop to the DB column
+            preferred_language: userLanguage || 'English' 
           })
           .select('id').single()
 
         if (insertError) throw insertError
         createdIds.push(logData.id)
       }
-      
       onUploadComplete(createdIds)
     } catch (err) {
       console.error("System Failure:", err)
@@ -148,6 +145,14 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
               {previews.map((src, i) => (
                 <div key={i} style={styles.previewContainer}>
                   <img src={src} style={styles.miniPreview} alt="Preview" />
+                  {!uploading && (
+                    <div 
+                      style={styles.removeBtn} 
+                      onClick={(e) => removeImage(e, i)}
+                    >
+                      ✕
+                    </div>
+                  )}
                 </div>
               ))}
               <div style={styles.addMoreCircle}>
@@ -163,7 +168,6 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
           )}
         </div>
 
-        {/* PM FIX: Restored 'multiple' and removed 'capture' to allow Gallery access and Multi-selection */}
         <input 
           ref={inputRef} 
           type="file" 
@@ -215,8 +219,13 @@ const styles = {
   dropZone: { border: '2px dashed #cbdad2', borderRadius: '16px', padding: '30px 20px', textAlign: 'center', cursor: 'pointer', background: '#fcfdfc', transition: 'all 0.2s ease', minHeight: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   dropZoneWithImage: { padding: '16px', border: '2px solid #52b788', background: '#fff' },
   previewGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', width: '100%' },
-  previewContainer: { position: 'relative' },
+  previewContainer: { position: 'relative', width: '100%', height: '80px' },
   miniPreview: { width: '100%', height: '80px', objectFit: 'cover', borderRadius: '10px', border: '1px solid #e0e6e3' },
+  removeBtn: { 
+    position: 'absolute', top: '-6px', right: '-6px', background: '#ff4d4d', color: 'white', borderRadius: '50%', 
+    width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', 
+    fontSize: '10px', fontWeight: 'bold', boxShadow: '0 2px 4px rgba(0,0,0,0.2)', zIndex: 10
+  },
   addMoreCircle: { height: '80px', borderRadius: '10px', border: '2px dashed #cbdad2', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f9fbf9' },
   submitBtn: { width: '100%', padding: '18px', background: 'linear-gradient(135deg, #2d6a4f, #52b788)', color: '#fff', border: 'none', borderRadius: '14px', cursor: 'pointer', fontWeight: '600', fontSize: '16px', marginTop: '16px', boxShadow: '0 4px 15px rgba(45,106,79,0.2)' },
   submitBtnDisabled: { opacity: 0.6, cursor: 'not-allowed', background: '#9eb8ad' },
