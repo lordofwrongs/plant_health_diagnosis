@@ -69,13 +69,11 @@ export default function App() {
           </button>
         </div>
         
-        {/* IMPROVED: High-Visibility Language Toggle */}
         <button onClick={() => setShowSettings(!showSettings)} style={styles.settingsToggle}>
           🌐 {preferences.language === 'English' ? 'EN' : preferences.language.substring(0, 2).toUpperCase()}
         </button>
       </nav>
 
-      {/* Language Selection Bar */}
       {showSettings && (
         <div style={styles.settingsBar}>
           <span style={styles.settingsLabel}>Preferred Language:</span>
@@ -114,6 +112,7 @@ export default function App() {
         {screen === 'results' && (
           <ResultsScreen 
             result={result} 
+            userLanguage={preferences.language} // FIXED: Passed the prop here
             onReset={handleReset} 
             onBack={() => setScreen('history')} 
             allScans={historyContext} 

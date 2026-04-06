@@ -13,13 +13,17 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
     const meta = result.vernacular_metadata;
     const currentLangKey = userLanguage?.toLowerCase();
 
+    // Logic: Check if metadata exists for the chosen language
     if (meta && meta[currentLangKey] && currentLangKey !== 'english') {
-      return `${meta[currentLangKey]} (${meta.english || result.PlantName})`;
+      const vernacularName = meta[currentLangKey];
+      const englishReference = meta.english || result.PlantName;
+      return `${vernacularName} (${englishReference})`;
     }
+    
+    // Fallback: If English or metadata missing, use standard PlantName
     return result.PlantName || 'New Discovery';
   };
 
-  // Logic: allScans[0] is current, allScans[1] is the previous one
   const previousScan = allScans.length > 1 ? allScans[1] : null;
 
   const healthColor = result?.HealthColor 
