@@ -103,18 +103,21 @@ export default function App() {
         {screen === 'upload' && (
           <UploadScreen 
             onUploadComplete={handleUploadComplete} 
-            userLanguage={preferences.language} 
+            userLanguage={preferences.language} // <--- PASSING TO SUPABASE INSERT
           />
         )}
         
         {screen === 'analysing' && (
-          <AnalysingScreen logId={activeLogId} onResultReady={handleResultReady} />
+          <AnalysingScreen 
+            logId={activeLogId} 
+            onResultReady={handleResultReady} 
+          />
         )}
         
         {screen === 'results' && (
           <ResultsScreen 
             result={result} 
-            userLanguage={preferences.language} // FIXED: Explicitly passing the prop
+            userLanguage={preferences.language} // <--- PASSING FOR DISPLAY
             onReset={handleReset} 
             onBack={() => setScreen('history')} 
             allScans={historyContext} 
