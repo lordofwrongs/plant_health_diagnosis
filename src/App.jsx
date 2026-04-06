@@ -69,11 +69,13 @@ export default function App() {
           </button>
         </div>
         
+        {/* Language Toggle */}
         <button onClick={() => setShowSettings(!showSettings)} style={styles.settingsToggle}>
           🌐 {preferences.language === 'English' ? 'EN' : preferences.language.substring(0, 2).toUpperCase()}
         </button>
       </nav>
 
+      {/* Language Selection Bar */}
       {showSettings && (
         <div style={styles.settingsBar}>
           <span style={styles.settingsLabel}>Preferred Language:</span>
@@ -112,7 +114,7 @@ export default function App() {
         {screen === 'results' && (
           <ResultsScreen 
             result={result} 
-            userLanguage={preferences.language} // FIXED: Passed the prop here
+            userLanguage={preferences.language} // FIXED: Explicitly passing the prop
             onReset={handleReset} 
             onBack={() => setScreen('history')} 
             allScans={historyContext} 
@@ -193,8 +195,7 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: '12px',
-    flexWrap: 'wrap',
-    animation: 'slideDown 0.3s ease-out'
+    flexWrap: 'wrap'
   },
   settingsLabel: { 
     fontSize: '12px', 

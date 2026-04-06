@@ -1,26 +1,25 @@
-import React, { useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+import React, { useState, useEffect } from 'react';
+// Corrected Import: Use your existing client instead of creating a new one
+import { supabase } from '../supabaseClient.js';
 
 export default function ResultsScreen({ result, userLanguage, onReset, onBack, allScans = [] }) {
   const [feedbackStatus, setFeedbackStatus] = useState(null);
 
+  // LOGIC: Get the correct name based on the current toggle setting
   const getDynamicName = () => {
     if (!result) return 'New Discovery';
+    
     const meta = result.vernacular_metadata;
     const currentLangKey = userLanguage?.toLowerCase();
 
-    // Logic: Check if metadata exists for the chosen language
+    // If we have metadata for the selected language, show it + English in parens
     if (meta && meta[currentLangKey] && currentLangKey !== 'english') {
       const vernacularName = meta[currentLangKey];
       const englishReference = meta.english || result.PlantName;
       return `${vernacularName} (${englishReference})`;
     }
-    
-    // Fallback: If English or metadata missing, use standard PlantName
+
+    // Fallback to the default PlantName (English)
     return result.PlantName || 'New Discovery';
   };
 
