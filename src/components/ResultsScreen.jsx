@@ -10,22 +10,22 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
     const meta = result.vernacular_metadata;
     const currentLangKey = userLanguage?.toLowerCase();
 
-    // 1. Return Standard if English
-    if (!currentLangKey || currentLangKey === 'english') {
+    // If no metadata or English, just return the standard name
+    if (!meta || !currentLangKey || currentLangKey === 'english') {
       return result.PlantName || 'New Discovery';
     }
 
-    // 2. Search Metadata
-    if (meta) {
-      // Find key matching 'tamil', 'hindi', etc.
-      const translation = Object.keys(meta).find(k => k.toLowerCase() === currentLangKey);
-      if (translation && meta[translation]) {
-        const englishReference = meta.english || result.PlantName;
-        return `${meta[translation]} (${englishReference})`;
-      }
+    // This looks for ANY key in your JSON that CONTAINS the language name
+    const matchingKey = Object.keys(meta).find(k => 
+      k.toLowerCase().includes(currentLangKey)
+    );
+
+    if (matchingKey && meta[matchingKey]) {
+      const localName = meta[matchingKey];
+      const englishRef = meta.english || result.PlantName;
+      return `${localName} (${englishRef})`;
     }
 
-    // 3. Fallback
     return result.PlantName || 'New Discovery';
   };
 
@@ -92,6 +92,20 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
               )}
             </div>
             <p style={styles.scientificName}>{result?.ScientificName}</p>
+            
+            {/* VERNACULAR METADATA DISPLAY SECTION */}
+            {result?.vernacular_metadata && (
+              <div style={styles.vernacularRow}>
+                {Object.entries(result.vernacular_metadata).map(([lang, name]) => (
+                  lang !== 'english' && (
+                    <span key={lang} style={styles.vernacularBadge}>
+                      {lang.charAt(0).toUpperCase() + lang.slice(1)}: {name}
+                    </span>
+                  )
+                ))}
+              </div>
+            )}
+
             <div style={styles.accuracyTag}>AI Confidence: {result?.AccuracyScore}%</div>
           </div>
         </div>
@@ -184,6 +198,8 @@ const styles = {
   plantName: { margin: 0, fontSize: '24px', color: '#1a3a2a', fontFamily: "'Playfair Display', serif", flex: 1, lineHeight: '1.2' },
   trendChip: { background: '#e8f5e9', color: '#2d6a4f', padding: '4px 12px', borderRadius: '20px', fontSize: '11px', fontWeight: '700', whiteSpace: 'nowrap' },
   scientificName: { margin: '4px 0 12px 0', fontSize: '16px', color: '#6a8378', fontStyle: 'italic' },
+  vernacularRow: { marginTop: '10px', marginBottom: '15px', display: 'flex', gap: '8px', flexWrap: 'wrap' },
+  vernacularBadge: { fontSize: '12px', color: '#2d6a4f', background: '#e8f5e9', padding: '4px 10px', borderRadius: '6px', fontWeight: '600' },
   accuracyTag: { display: 'inline-block', background: '#f0f4f2', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', color: '#2d6a4f', fontWeight: '700' },
   sectionCard: { background: '#fff', padding: '24px', borderRadius: '20px', marginBottom: '16px', border: '1px solid #f0f4f2' },
   sectionTitle: { margin: '0 0 12px 0', fontSize: '15px', color: '#1a3a2a', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' },
