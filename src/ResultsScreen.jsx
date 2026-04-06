@@ -7,21 +7,30 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
 
   // LOGIC: Get the correct name based on the current toggle setting
   const getDynamicName = () => {
-    if (!result) return 'New Discovery';
-    
-    const meta = result.vernacular_metadata;
-    const currentLangKey = userLanguage?.toLowerCase();
+  if (!result) return 'New Discovery';
+  
+  const meta = result.vernacular_metadata;
+  const currentLangKey = userLanguage?.toLowerCase();
 
-    // If we have metadata for the selected language, show it + English in parens
-    if (meta && meta[currentLangKey] && currentLangKey !== 'english') {
-      const vernacularName = meta[currentLangKey];
-      const englishReference = meta.english || result.PlantName;
-      return `${vernacularName} (${englishReference})`;
-    }
-
-    // Fallback to the default PlantName (English)
+  // 1. Check if we are in English mode - just return the standard name
+  if (!currentLangKey || currentLangKey === 'english') {
     return result.PlantName || 'New Discovery';
-  };
+  }
+
+  // 2. Try to find the translated name in metadata
+  if (meta) {
+    // Look for the key (e.g., 'hindi', 'telugu') regardless of case
+    const translation = meta[currentLangKey] || meta[userLanguage];
+    
+    if (translation) {
+      const englishReference = meta.english || result.PlantName;
+      return `${translation} (${englishReference})`;
+    }
+  }
+
+  // 3. Fallback
+  return result.PlantName || 'New Discovery';
+};
 
   const previousScan = allScans.length > 1 ? allScans[1] : null;
 
