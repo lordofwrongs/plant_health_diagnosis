@@ -56,56 +56,82 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
     }
   }
 
+  const compressImage = (file) => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (e) => {
+        const img = new Image();
+        img.src = e.target.result;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 1200; // Optimal for AI analysis while reducing size
+          const scale = MAX_WIDTH / img.width;
+          canvas.width = MAX_WIDTH;
+          canvas.height = img.height * scale;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob((blob) => {
+            resolve(new File([blob], file.name.replace(/\.[^/.]+$/, "") + ".jpg", { type: 'image/jpeg' }));
+          }, 'image/jpeg', 0.8);
+        };
+      };
+    });
+  };
+
   const handleSubmit = async () => {
     if (files.length === 0 || uploading || isProcessing.current) return
     isProcessing.current = true
     setUploading(true)
     setError(null)
 
-    const context = await getLocationContext()
-    setStatusMessage(`Uploading ${files.length} images...`)
-    const guestId = localStorage.getItem('plant_care_guest_id')
-    const createdIds = []
-
     try {
-      for (const file of files) {
-        const ext = file.name.split('.').pop()
-        const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      // 1. Parallelize Location Sync and Image Compression
+      const [context, compressedFiles] = await Promise.all([
+        getLocationContext(),
+        Promise.all(files.map(f => compressImage(f)))
+      ]);
 
-        const { error: uploadError } = await supabase.storage
-          .from(BUCKET)
-          .upload(fileName, file, { contentType: file.type })
-        
-        if (uploadError) throw uploadError
+      setStatusMessage(`Uploading ${files.length} images...`)
+      const guestId = localStorage.getItem('plant_care_guest_id')
+      
+      // 2. Parallel Storage Uploads
+      const uploadPromises = compressedFiles.map(async (file) => {
+        const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`
+        const { error: upErr } = await supabase.storage.from(BUCKET).upload(fileName, file)
+        if (upErr) throw new Error(`Storage error: ${upErr.message}`)
+        return supabase.storage.from(BUCKET).getPublicUrl(fileName).data.publicUrl
+      });
 
-        const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(fileName)
-        const imageUrl = urlData.publicUrl
+      const imageUrls = await Promise.all(uploadPromises);
 
-        // DEBUG: Check what is being passed right before insertion
-        console.log("DEBUG: Storing record with language:", userLanguage);
-
-        const { data: logData, error: insertError } = await supabase
+      // 3. Batch Database Insertions
+      const insertPromises = imageUrls.map(url => 
+        supabase
           .from('plant_logs')
           .insert({ 
             user_id: guestId, 
-            image_url: imageUrl, 
+            image_url: url, 
             status: 'pending', 
-            latitude: context.lat,
-            longitude: context.lng,
-            location_name: context.name,
+            latitude: context?.lat,
+            longitude: context?.lng,
+            location_name: context?.name || 'Unknown Location',
             plant_nickname: nickname || null,
-            // CRITICAL FIX: Explicitly mapping the prop to the DB column
             preferred_language: userLanguage || 'English' 
           })
           .select('id').single()
+      );
 
-        if (insertError) throw insertError
-        createdIds.push(logData.id)
-      }
+      const dbResults = await Promise.all(insertPromises);
+      const createdIds = dbResults.map(res => {
+        if (res.error) throw new Error(`Database error: ${res.error.message}`);
+        return res.data.id;
+      });
+
       onUploadComplete(createdIds)
     } catch (err) {
-      console.error("System Failure:", err)
-      setError('Connection interrupted. Please try again.')
+      console.error("Upload process failed:", err)
+      setError(err.message.includes('fetch') ? 'Network timeout. Please try again on Wi-Fi.' : err.message)
       setUploading(false)
       isProcessing.current = false
     }
