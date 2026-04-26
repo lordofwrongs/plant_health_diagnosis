@@ -15,9 +15,20 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
   const isProcessing = useRef(false)
 
   const handleFiles = (fileList) => {
-    const selectedFiles = Array.from(fileList).filter(f => f.type.startsWith('image/'))
+    const all = Array.from(fileList)
+
+    const heicFiles = all.filter(f =>
+      f.type === 'image/heic' || f.type === 'image/heif' || /\.heic$/i.test(f.name)
+    )
+    if (heicFiles.length > 0) {
+      setError('HEIC photos (iPhone camera roll) are not supported. Please take a new photo directly in the app, or export as JPEG from your Photos app first.')
+      logger.warn('UploadScreen', `Rejected ${heicFiles.length} HEIC file(s)`)
+      return
+    }
+
+    const selectedFiles = all.filter(f => f.type.startsWith('image/'))
     if (selectedFiles.length === 0) return
-    
+
     setFiles(prev => [...prev, ...selectedFiles])
     setPreviews(prev => [...prev, ...selectedFiles.map(f => URL.createObjectURL(f))])
     setError(null)

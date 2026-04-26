@@ -48,6 +48,36 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 }
 
 // ---------------------------------------------------------------------------
+// Retry wrapper — retries on transient errors (5xx, timeouts) but not 4xx
+// ---------------------------------------------------------------------------
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  logger: ReturnType<typeof createLogger>,
+  stage: string,
+  maxRetries = 2
+): Promise<Response> {
+  let lastErr: Error = new Error('Unknown error')
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetchWithTimeout(url, init, timeoutMs)
+      // Don't retry client errors (4xx) — they won't improve on retry
+      if (res.ok || (res.status >= 400 && res.status < 500)) return res
+      lastErr = new Error(`HTTP ${res.status}`)
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e))
+    }
+    if (attempt < maxRetries) {
+      const delayMs = Math.pow(2, attempt) * 1500  // 1.5s, 3s
+      logger.warn(stage, `Attempt ${attempt + 1} failed: ${lastErr.message} — retrying in ${delayMs}ms`)
+      await new Promise(r => setTimeout(r, delayMs))
+    }
+  }
+  throw lastErr
+}
+
+// ---------------------------------------------------------------------------
 // Safely parse AI JSON — handles pre-parsed objects and markdown code fences
 // ---------------------------------------------------------------------------
 function parseAIJson(content: unknown): Record<string, unknown> {
@@ -97,7 +127,7 @@ serve(async (req) => {
     logger.startTimer('stage1_quality')
     logger.info('stage1_quality', 'Sending image for quality check')
 
-    const qualityRes = await fetchWithTimeout(
+    const qualityRes = await fetchWithRetry(
       'https://openrouter.ai/api/v1/chat/completions',
       {
         method: 'POST',
@@ -126,7 +156,7 @@ serve(async (req) => {
           ],
         }),
       },
-      25000
+      25000, logger, 'stage1_quality'
     )
 
     if (!qualityRes.ok) {
@@ -210,7 +240,7 @@ serve(async (req) => {
     logger.startTimer('stage3_analysis')
     logger.info('stage3_analysis', 'Sending image + context to AI for plant analysis')
 
-    const analysisRes = await fetchWithTimeout(
+    const analysisRes = await fetchWithRetry(
       'https://openrouter.ai/api/v1/chat/completions',
       {
         method: 'POST',
@@ -226,10 +256,10 @@ serve(async (req) => {
             {
               role: 'system',
               content: [
-                'You are a master horticultural coach with deep knowledge of regional plant names across South Asia.',
-                'Always respond with valid JSON only.',
-                'All keys inside vernacular_names must be lowercase.',
+                'You are a botanist and master horticultural coach with expertise in plant identification and South Asian regional plant names.',
+                'Always respond with valid JSON only. All keys inside vernacular_names must be lowercase.',
                 'Do not wrap the response in markdown code fences.',
+                'ACCURACY OVER CONFIDENCE: It is far better to give a lower confidence score with a correct identification than a high score with a wrong one.',
               ].join(' '),
             },
             {
@@ -243,20 +273,31 @@ Weather: ${weatherSnippet}
 History: ${historyContext}
 User Hint: "${nickname || 'None provided'}"
 
-IDENTIFICATION RULES:
-1. If a User Hint is given, prioritize it. Do not override unless botanically impossible.
-2. For vernacular_names, use established traditional regional names — NOT literal translations or phonetic transliterations.
-3. When a plant has a sacred/cultural substitute name used locally (e.g. Epiphyllum oxypetalum as 'Brahma Kamal'), lead with that name.
+STEP 1 — OBSERVE CAREFULLY before identifying. Study these visual features in the image:
+- Leaf shape: Is it round, oval, heart-shaped, elongated, lobed, compound, peltate (stem attached to center)?
+- Leaf texture: Thick/succulent, thin, glossy, matte, fuzzy, waxy?
+- Leaf size and color: Approximate size, shade of green, any variegation or markings?
+- Stem: Thick or thin, woody or herbaceous, trailing or upright?
+- Growth habit: Rosette, trailing, climbing, upright bush, single stem?
+- Any flowers, fruits, or distinctive markers visible?
 
-YOUR TASK:
-1. Identify the plant using the image and User Hint.
-2. In display_name, use the most culturally relatable name in ${userLang}.
-3. Assess plant health and provide detailed care recommendations in ${userLang}.
-4. If weather data indicates risk (heat stress, drought, flooding), set weather_alert. Otherwise set to null.
+STEP 2 — IDENTIFY based only on what you actually observe.
+- If a User Hint is provided, use it as strong supporting context but only accept it if the visual features match.
+- Do NOT guess a similar-sounding plant. If unsure, say so in the confidence score.
+- CONFIDENCE CALIBRATION (be honest):
+  * 0.90–1.00: Iconic, unmistakable plant (e.g. Aloe vera, Monstera deliciosa, Banana)
+  * 0.70–0.89: Clear distinguishing features visible, highly confident
+  * 0.50–0.69: Some features match but image is partial or ambiguous
+  * Below 0.50: Genuinely uncertain — use display_name like "Possibly [name]"
 
-RESPOND WITH THIS EXACT JSON STRUCTURE:
+STEP 3 — ASSESS HEALTH based on visible leaf condition, soil, stems.
+
+STEP 4 — REGIONAL NAMES. For vernacular_names use traditional names used by local people in ${userLang}, Hindi, Tamil, Telugu — NOT literal translations.
+
+RESPOND WITH THIS EXACT JSON:
 {
-  "display_name": "Culturally relatable name in ${userLang}",
+  "visual_features": "One sentence describing exactly what leaf shape, texture, stem, and growth pattern you observe",
+  "display_name": "Most culturally relatable name in ${userLang}",
   "scientific_name": "Genus species",
   "vernacular_names": {
     "english": "Common English name",
@@ -264,7 +305,7 @@ RESPOND WITH THIS EXACT JSON STRUCTURE:
     "tamil": "Traditional Tamil name or None",
     "telugu": "Traditional Telugu name or None"
   },
-  "confidence_score": 0.95,
+  "confidence_score": 0.75,
   "health_status": "Health status in ${userLang}",
   "analysis": "Detailed visual analysis of plant condition in ${userLang}",
   "recovery_steps": ["Step 1 in ${userLang}", "Step 2 in ${userLang}", "Step 3 in ${userLang}"],
@@ -278,7 +319,7 @@ RESPOND WITH THIS EXACT JSON STRUCTURE:
           ],
         }),
       },
-      45000
+      45000, logger, 'stage3_analysis'
     )
 
     if (!analysisRes.ok) {
@@ -312,7 +353,9 @@ RESPOND WITH THIS EXACT JSON STRUCTURE:
         AccuracyScore: finalScore,
         HealthStatus: healthStatus,
         HealthColor: healthColor,
-        VisualAnalysis: result.analysis,
+        VisualAnalysis: result.visual_features
+          ? `[Observed: ${result.visual_features}]\n\n${result.analysis}`
+          : result.analysis,
         vernacular_metadata: result.vernacular_names ?? {},
         CarePlan: Array.isArray(result.recovery_steps)
           ? result.recovery_steps.map((s: unknown) => `• ${String(s)}`).join('\n')
