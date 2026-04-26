@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(git -C \"c:/Users/sunda/OneDrive/Documents/Sundar/Projects/PlantAppProject\" status)",
-      "Bash(git -C \"c:/Users/sunda/OneDrive/Documents/Sundar/Projects/PlantAppProject/plant_health_diagnosis-main\" status)"
-    ]
-  }
-}
