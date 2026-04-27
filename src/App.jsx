@@ -3,6 +3,7 @@ import UploadScreen from './components/UploadScreen.jsx'
 import AnalysingScreen from './components/AnalysingScreen.jsx'
 import ResultsScreen from './components/ResultsScreen.jsx'
 import HistoryScreen from './components/HistoryScreen.jsx'
+import RegisterModal from './components/RegisterModal.jsx'
 
 // ── BotanIQ logo mark + wordmark ─────────────────────────────────────────────
 function BotanIQMark({ size = 32 }) {
@@ -21,6 +22,8 @@ export default function App() {
   const [activeLogId, setActiveLogId] = useState(null)
   const [result, setResult] = useState(null)
   const [historyContext, setHistoryContext] = useState([])
+
+  const [showRegisterModal, setShowRegisterModal] = useState(false)
 
   const [preferences, setPreferences] = useState(() => {
     const saved = localStorage.getItem('plant_care_prefs')
@@ -51,6 +54,9 @@ export default function App() {
     setResult(data)
     setHistoryContext([])
     setScreen('results')
+    if (!localStorage.getItem('botaniq_registered')) {
+      setShowRegisterModal(true)
+    }
   }
 
   const handleReset = () => {
@@ -125,6 +131,14 @@ export default function App() {
           )}
         </div>
       </nav>
+
+      {/* ── Registration modal ──────────────────────────────── */}
+      {showRegisterModal && (
+        <RegisterModal
+          onComplete={() => setShowRegisterModal(false)}
+          onSkip={() => setShowRegisterModal(false)}
+        />
+      )}
 
       {/* ── Screens ─────────────────────────────────────────── */}
       <main style={styles.mainContent}>

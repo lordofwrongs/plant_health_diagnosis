@@ -15,8 +15,9 @@ BotanIQ is a free, AI-powered plant identification and health diagnosis app. Upl
 - **Smart quality gate** — hard rejects unanalyzable images; soft-proceeds with photo guidance for suboptimal but usable shots
 - **Multi-language** — reports in English, Hindi, Tamil, Telugu
 - **Weather alerts** — location-aware climate risk warnings
-- **History** — tracks all scans per plant over time with health trend comparison
+- **History** — tracks all scans per plant over time with health trend comparison and full scan timeline browsing
 - **Realtime updates** — WebSocket push with HTTP polling fallback
+- **Soft registration** — optional name + email capture after first scan; no password, no verification; stored for support outreach
 
 ---
 
@@ -50,7 +51,8 @@ BotanIQ is a free, AI-powered plant identification and health diagnosis app. Upl
 │       ├── UploadScreen.jsx      # Photo upload + compression
 │       ├── AnalysingScreen.jsx   # Real-time analysis progress
 │       ├── ResultsScreen.jsx     # Full diagnosis results
-│       └── HistoryScreen.jsx     # Plant garden history
+│       ├── HistoryScreen.jsx     # Plant garden history
+│       └── RegisterModal.jsx     # Soft registration overlay (post-first-scan)
 ├── supabase/
 │   ├── functions/
 │   │   └── plant-processor/

@@ -118,6 +118,16 @@ Active tab: `--mist` background, `--primary` text, 4px leaf-green dot indicator 
 - **Photo Tip**: brown box (shown only when AI returned a `photo_tip`)
 - **Feedback widget**: "Was this accurate?" with Yes/No buttons; thanks message on submit
 
+### Registration Modal
+- Shown as a full-screen overlay (blurred dark backdrop) after the **first scan result** is returned, if the user has not yet registered
+- Never shown more than once — dismissed state stored in `localStorage` as `botaniq_registered` (`"true"` or `"skipped"`)
+- **Fields**: First name (required) · Last name (required) · Email (required) · Phone (optional)
+- **CTA**: "Join BotanIQ" pill button (`--primary` fill)
+- **Skip link**: "Skip for now" text below CTA — stores `"skipped"` in localStorage, modal does not reappear
+- On submit: INSERT into `users` table in Supabase (keyed by `guest_id` from localStorage); duplicate guest submissions (e.g. same user on two devices) are silently treated as success
+- Validation: email format checked client-side before submit; inline error message shown on failure
+- Animation: card fades up on entry (`fadeUp` keyframe, 0.3s)
+
 ### Garden (History) Screen
 - **Header**: "My Garden" (Playfair serif) + species count
 - **Plant card**: thumbnail (80px, `--r-md`) + name + scientific name + health status dot
@@ -154,6 +164,20 @@ User uploads image
        ↓
   Supabase stores result → realtime push to client
 ```
+
+---
+
+## Data Model (users)
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | Primary key |
+| `guest_id` | text (unique) | Links to `plant_care_guest_id` in localStorage — joins to `plant_logs.user_id` |
+| `first_name` | text | Required |
+| `last_name` | text | Required |
+| `email` | text | Required; unverified (no magic-link flow by design) |
+| `phone` | text | Optional |
+| `created_at` | timestamptz | Auto-set |
 
 ---
 
