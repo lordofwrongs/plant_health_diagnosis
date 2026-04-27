@@ -12,10 +12,9 @@ create table if not exists users (
 
 alter table users enable row level security;
 
--- Anyone (anon) can insert their own profile row
+-- Anyone (anon) can insert their own profile row.
+-- No select policy for anon — user data is only readable by the service role (admin).
+-- The client uses localStorage (botaniq_registered) to know if already registered,
+-- so it never needs to query this table.
 create policy "anon_insert" on users
   for insert to anon with check (true);
-
--- Anyone can read rows (needed by client to check if already registered)
-create policy "anon_select" on users
-  for select to anon using (true);
