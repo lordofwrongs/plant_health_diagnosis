@@ -449,9 +449,10 @@ YOUR TASK:
 1. IDENTIFICATION: Follow the identification strategy above precisely.
 2. HEALTH ASSESSMENT: Analyse leaf colour, turgor, spots, wilting, soil condition.
 3. health_category MUST be exactly one of: "healthy", "fair", or "critical" (English, always).
-4. REGIONAL NAMES: Use traditional names used by locals — not literal translations.
-5. USER LANGUAGE: All user-facing text in ${userLang}.
-6. weather_alert: Only if weather data indicates genuine risk. Otherwise null.
+4. health_status MUST be a SHORT badge label (2-4 words max) in ${userLang} — e.g. "Healthy", "Needs Attention", "Stressed", "Critical Condition". Never a full sentence.
+5. REGIONAL NAMES: Use traditional names used by locals — not literal translations.
+6. USER LANGUAGE: All user-facing text (except health_category) in ${userLang}.
+7. weather_alert: Only if weather data indicates genuine risk. Otherwise null.
 
 RESPOND WITH THIS EXACT JSON (no markdown fences):
 {
@@ -467,7 +468,7 @@ RESPOND WITH THIS EXACT JSON (no markdown fences):
     "telugu": "Traditional Telugu name or None"
   },
   "health_category": "healthy",
-  "health_status": "Health status in ${userLang}",
+  "health_status": "Healthy",
   "analysis": "Detailed health analysis in ${userLang}",
   "recovery_steps": ["Step 1 in ${userLang}", "Step 2", "Step 3"],
   "pro_tip": "Regional gardening tip for ${log.location_name} in ${userLang}",
