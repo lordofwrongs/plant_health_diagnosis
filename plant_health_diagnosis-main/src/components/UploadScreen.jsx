@@ -7,45 +7,42 @@ const BUCKET = 'plant_images'
 export default function UploadScreen({ onUploadComplete, userLanguage }) {
   const [previews, setPreviews] = useState([])
   const [files, setFiles] = useState([])
-  const [nickname, setNickname] = useState('') 
+  const [nickname, setNickname] = useState('')
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState(null)
   const [statusMessage, setStatusMessage] = useState('')
+  const [dragOver, setDragOver] = useState(false)
   const inputRef = useRef()
   const isProcessing = useRef(false)
 
   const handleFiles = (fileList) => {
     const all = Array.from(fileList)
-
     const heicFiles = all.filter(f =>
       f.type === 'image/heic' || f.type === 'image/heif' || /\.heic$/i.test(f.name)
     )
     if (heicFiles.length > 0) {
-      setError('HEIC photos (iPhone camera roll) are not supported. Please take a new photo directly in the app, or export as JPEG from your Photos app first.')
+      setError('HEIC photos are not supported. Please export as JPEG from your Photos app first.')
       logger.warn('UploadScreen', `Rejected ${heicFiles.length} HEIC file(s)`)
       return
     }
-
     const selectedFiles = all.filter(f => f.type.startsWith('image/'))
     if (selectedFiles.length === 0) return
-
     setFiles(prev => [...prev, ...selectedFiles])
     setPreviews(prev => [...prev, ...selectedFiles.map(f => URL.createObjectURL(f))])
     setError(null)
   }
 
-  // --- Remove Individual Image Logic ---
   const removeImage = (e, index) => {
-    e.stopPropagation(); 
-    setFiles(prev => prev.filter((_, i) => i !== index));
+    e.stopPropagation()
+    setFiles(prev => prev.filter((_, i) => i !== index))
     setPreviews(prev => {
-      URL.revokeObjectURL(prev[index]);
-      return prev.filter((_, i) => i !== index);
-    });
-  };
+      URL.revokeObjectURL(prev[index])
+      return prev.filter((_, i) => i !== index)
+    })
+  }
 
   const getLocationContext = async () => {
-    setStatusMessage('Syncing with satellites...')
+    setStatusMessage('Getting location...')
     const ipFallback = async () => {
       try {
         const res = await fetch('https://ipapi.co/json/')
@@ -58,11 +55,11 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
     try {
       const position = await new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true, timeout: 12000, maximumAge: 0
+          enableHighAccuracy: true, timeout: 12000, maximumAge: 0,
         })
       })
       return { lat: position.coords.latitude, lng: position.coords.longitude, name: null }
-    } catch (err) {
+    } catch {
       setStatusMessage('Using approximate location...')
       return await ipFallback()
     }
@@ -79,7 +76,6 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
         img.src = e.target.result
         img.onload = () => {
           const MAX_WIDTH = 1200
-          // Only scale DOWN — never upscale smaller images (upscaling wastes bandwidth and degrades quality)
           const scale = img.width > MAX_WIDTH ? MAX_WIDTH / img.width : 1
           const canvas = document.createElement('canvas')
           canvas.width  = Math.round(img.width  * scale)
@@ -87,8 +83,7 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
           const ctx = canvas.getContext('2d')
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
           canvas.toBlob((blob) => {
-            if (!blob) { reject(new Error(`Compression produced empty blob: ${file.name}`)); return }
-            logger.info('UploadScreen', `Compressed ${file.name}: ${img.width}x${img.height} → ${canvas.width}x${canvas.height} (${(blob.size/1024).toFixed(0)}KB)`)
+            if (!blob) { reject(new Error(`Compression failed: ${file.name}`)); return }
             resolve(new File([blob], file.name.replace(/\.[^/.]+$/, '') + '.jpg', { type: 'image/jpeg' }))
           }, 'image/jpeg', 0.8)
         }
@@ -106,87 +101,123 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
     logger.info('UploadScreen', `Submit started: ${files.length} file(s), lang=${userLanguage}`, { guest_id: guestId })
 
     try {
-      // 1. Parallelize location sync and image compression
       const [context, compressedFiles] = await Promise.all([
         getLocationContext(),
-        Promise.all(files.map(f => compressImage(f)))
+        Promise.all(files.map(f => compressImage(f))),
       ])
-      logger.info('UploadScreen', `Location: ${context?.name}, compressed ${compressedFiles.length} image(s)`)
 
       setStatusMessage(`Uploading ${files.length} image${files.length > 1 ? 's' : ''}...`)
 
-      // 2. Parallel storage uploads
-      const uploadPromises = compressedFiles.map(async (file) => {
+      const imageUrls = await Promise.all(compressedFiles.map(async (file) => {
         const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`
         const { error: upErr } = await supabase.storage.from(BUCKET).upload(fileName, file)
-        if (upErr) throw new Error(`Storage upload failed: ${upErr.message}`)
-        const url = supabase.storage.from(BUCKET).getPublicUrl(fileName).data.publicUrl
-        logger.info('UploadScreen', `Uploaded: ${fileName}`)
-        return url
-      })
+        if (upErr) throw new Error(`Upload failed: ${upErr.message}`)
+        return supabase.storage.from(BUCKET).getPublicUrl(fileName).data.publicUrl
+      }))
 
-      const imageUrls = await Promise.all(uploadPromises)
+      const dbResults = await Promise.all(imageUrls.map(url =>
+        supabase.from('plant_logs').insert({
+          user_id: guestId,
+          image_url: url,
+          status: 'pending',
+          latitude: context?.lat,
+          longitude: context?.lng,
+          location_name: context?.name || 'Unknown Location',
+          plant_nickname: nickname || null,
+          preferred_language: userLanguage || 'English',
+        }).select('id').single()
+      ))
 
-      // 3. Batch DB insertions
-      const insertPromises = imageUrls.map(url =>
-        supabase
-          .from('plant_logs')
-          .insert({
-            user_id: guestId,
-            image_url: url,
-            status: 'pending',
-            latitude: context?.lat,
-            longitude: context?.lng,
-            location_name: context?.name || 'Unknown Location',
-            plant_nickname: nickname || null,
-            preferred_language: userLanguage || 'English',
-          })
-          .select('id')
-          .single()
-      )
-
-      const dbResults = await Promise.all(insertPromises)
       const createdIds = dbResults.map(res => {
-        if (res.error) throw new Error(`Database insert failed: ${res.error.message}`)
+        if (res.error) throw new Error(`Database error: ${res.error.message}`)
         return res.data.id
       })
 
-      logger.info('UploadScreen', `Records created: ${createdIds.join(', ')}`)
       onUploadComplete(createdIds)
     } catch (err) {
       logger.error('UploadScreen', `Submit failed: ${err.message}`, { guest_id: guestId })
       const isNetwork = err.message.includes('fetch') || err.message.includes('network') || err.message.includes('Failed to fetch')
-      setError(isNetwork
-        ? 'Network error — please check your connection and try again.'
-        : err.message
-      )
+      setError(isNetwork ? 'Network error — please check your connection and try again.' : err.message)
       setUploading(false)
       isProcessing.current = false
     }
   }
 
+  const hasPhotos = previews.length > 0
+
   return (
     <div style={styles.page}>
-      <div style={styles.header}>
-        <div style={styles.logo}><LeafIcon /><span style={styles.logoText}>PlantCare</span></div>
-        <p style={styles.tagline}>AI-Powered Botanical Intelligence</p>
+      {/* Hero */}
+      <div className="fade-up" style={styles.hero}>
+        <p style={styles.heroEyebrow}>AI Plant Intelligence</p>
+        <h1 style={styles.heroHeading}>Know your plant,<br />grow with confidence.</h1>
+        <p style={styles.heroSub}>
+          Upload a photo and BotanIQ identifies species, diagnoses health, and delivers a personalised care plan — in seconds.
+        </p>
       </div>
 
-      <div style={styles.card}>
-        <h2 style={styles.cardTitle}>Analyze Health</h2>
-        <p style={styles.cardSubtitle}>
-          Upload multiple photos for a better diagnosis. We'll use local weather and <strong>{userLanguage}</strong> for the report.
-        </p>
-        <div style={styles.photoTip}>
-          <span style={styles.photoTipIcon}>📸</span>
-          <span>Best results: shoot from the side at leaf level · include a leaf closeup · avoid top-down angles</span>
+      {/* Card */}
+      <div className="fade-up-delay-1 verdant-card" style={styles.card}>
+
+        {/* Drop zone */}
+        <div
+          style={{
+            ...styles.dropZone,
+            ...(hasPhotos ? styles.dropZoneActive : {}),
+            ...(dragOver ? styles.dropZoneDrag : {}),
+          }}
+          onClick={() => !uploading && inputRef.current.click()}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files) }}
+        >
+          {hasPhotos ? (
+            <div style={styles.previewGrid}>
+              {previews.map((src, i) => (
+                <div key={i} style={styles.previewItem}>
+                  <img src={src} style={styles.previewImg} alt="Preview" />
+                  {!uploading && (
+                    <button style={styles.removeBtn} onClick={(e) => removeImage(e, i)} aria-label="Remove">✕</button>
+                  )}
+                </div>
+              ))}
+              <div style={styles.addMoreTile}>
+                <span style={styles.addMorePlus}>+</span>
+                <span style={styles.addMoreLabel}>Add more</span>
+              </div>
+            </div>
+          ) : (
+            <div style={styles.dropContent}>
+              <div style={styles.cameraRing}>
+                <CameraIcon />
+              </div>
+              <p style={styles.dropTitle}>Take or upload a photo</p>
+              <p style={styles.dropHint}>Supports JPEG, PNG, WEBP · Multiple photos for better accuracy</p>
+            </div>
+          )}
         </div>
 
-        <div style={styles.inputWrapper}>
-          <label style={styles.label}>Identify this plant (optional)</label>
-          <input 
-            type="text" 
-            placeholder="e.g. Backyard Tomato" 
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          style={{ display: 'none' }}
+          onChange={(e) => handleFiles(e.target.files)}
+        />
+
+        {/* Photo tip */}
+        <div style={styles.tipRow}>
+          <span style={styles.tipIcon}>💡</span>
+          <span style={styles.tipText}>Best results: side angle at leaf level · include a leaf close-up · avoid top-down shots</span>
+        </div>
+
+        {/* Nickname */}
+        <div style={styles.field}>
+          <label style={styles.fieldLabel}>Nickname <span style={styles.optional}>(optional)</span></label>
+          <input
+            type="text"
+            placeholder="e.g. Backyard Tomato"
             value={nickname}
             onChange={(e) => setNickname(e.target.value)}
             style={styles.input}
@@ -194,105 +225,303 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
           />
         </div>
 
-        <div 
-          style={{ ...styles.dropZone, ...(previews.length > 0 ? styles.dropZoneWithImage : {}) }}
-          onClick={() => !uploading && inputRef.current.click()}
-        >
-          {previews.length > 0 ? (
-            <div style={styles.previewGrid}>
-              {previews.map((src, i) => (
-                <div key={i} style={styles.previewContainer}>
-                  <img src={src} style={styles.miniPreview} alt="Preview" />
-                  {!uploading && (
-                    <div 
-                      style={styles.removeBtn} 
-                      onClick={(e) => removeImage(e, i)}
-                    >
-                      ✕
-                    </div>
-                  )}
-                </div>
-              ))}
-              <div style={styles.addMoreCircle}>
-                <span style={{ fontSize: '24px', color: '#2d6a4f' }}>+</span>
-              </div>
-            </div>
-          ) : (
-            <div style={styles.dropContent}>
-              <div style={styles.uploadIcon}><CameraIcon /></div>
-              <p style={styles.dropText}>Tap to take photo or browse</p>
-              <p style={styles.dropSubtext}>Supports multiple images</p>
-            </div>
-          )}
-        </div>
+        {error && <div style={styles.errorBox}>{error}</div>}
 
-        <input 
-          ref={inputRef} 
-          type="file" 
-          accept="image/*" 
-          multiple 
-          style={{ display: 'none' }} 
-          onChange={(e) => handleFiles(e.target.files)} 
-        />
-        
-        {error && <div style={styles.errorContainer}>{error}</div>}
-
-        <button 
-          style={{ ...styles.submitBtn, ...((files.length === 0 || uploading) ? styles.submitBtnDisabled : {}) }}
-          onClick={handleSubmit} 
+        {/* CTA */}
+        <button
+          style={{ ...styles.cta, ...((files.length === 0 || uploading) ? styles.ctaDisabled : {}) }}
+          onClick={handleSubmit}
           disabled={files.length === 0 || uploading}
         >
           {uploading ? (
-            <span style={styles.loaderText}>{statusMessage}</span>
+            <span>{statusMessage || 'Preparing...'}</span>
           ) : (
-            `Analyze ${files.length > 0 ? files.length : ''} Plant${files.length > 1 ? 's' : ''}`
+            <span>
+              {files.length === 0
+                ? 'Analyse Plant'
+                : `Analyse ${files.length} Photo${files.length > 1 ? 's' : ''}`}
+            </span>
           )}
         </button>
-        
-        {files.length > 0 && !uploading && (
-          <button 
-            style={styles.clearBtn} 
-            onClick={() => { setFiles([]); setPreviews([]); }}
-          >
-            Clear All
+
+        {hasPhotos && !uploading && (
+          <button style={styles.clearLink} onClick={() => { setFiles([]); setPreviews([]) }}>
+            Clear all
           </button>
         )}
+      </div>
+
+      {/* Trust bar */}
+      <div className="fade-up-delay-2" style={styles.trustBar}>
+        {['🌿 PlantNet botanical database', '🤖 Gemini AI analysis', '📍 Local weather context'].map(item => (
+          <span key={item} style={styles.trustItem}>{item}</span>
+        ))}
       </div>
     </div>
   )
 }
 
 const styles = {
-  page: { minHeight: 'calc(100vh - 60px)', background: 'linear-gradient(160deg, #f0faf4 0%, #faf8f3 60%, #e8f5e9 100%)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 20px' },
-  header: { textAlign: 'center', marginBottom: '32px' },
-  logo: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginBottom: '8px' },
-  logoText: { fontFamily: "'Playfair Display', serif", fontSize: '26px', fontWeight: '600', color: '#1a3a2a' },
-  tagline: { fontSize: '14px', color: '#4a6358', letterSpacing: '0.5px' },
-  card: { background: '#fff', borderRadius: '24px', padding: '32px 28px', width: '100%', maxWidth: '440px', boxShadow: '0 12px 48px rgba(26,58,42,0.08)' },
-  cardTitle: { fontFamily: "'Playfair Display', serif", fontSize: '24px', color: '#1a3a2a', marginBottom: '8px' },
-  cardSubtitle: { fontSize: '13px', color: '#4a6358', marginBottom: '24px', lineHeight: '1.5' },
-  photoTip: { display: 'flex', alignItems: 'flex-start', gap: '8px', background: '#f0faf4', border: '1px solid #b7e4c7', borderRadius: '10px', padding: '10px 12px', marginBottom: '20px', fontSize: '12px', color: '#2d6a4f', lineHeight: '1.5' },
-  photoTipIcon: { fontSize: '16px', flexShrink: 0 },
-  inputWrapper: { marginBottom: '20px', textAlign: 'left' },
-  label: { fontSize: '12px', fontWeight: '600', color: '#2d6a4f', marginBottom: '6px', display: 'block' },
-  input: { width: '100%', padding: '12px', borderRadius: '12px', border: '1px solid #e0e6e3', fontSize: '14px', outline: 'none', background: '#fcfdfc' },
-  dropZone: { border: '2px dashed #cbdad2', borderRadius: '16px', padding: '30px 20px', textAlign: 'center', cursor: 'pointer', background: '#fcfdfc', transition: 'all 0.2s ease', minHeight: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  dropZoneWithImage: { padding: '16px', border: '2px solid #52b788', background: '#fff' },
-  previewGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', width: '100%' },
-  previewContainer: { position: 'relative', width: '100%', height: '80px' },
-  miniPreview: { width: '100%', height: '80px', objectFit: 'cover', borderRadius: '10px', border: '1px solid #e0e6e3' },
-  removeBtn: { 
-    position: 'absolute', top: '-6px', right: '-6px', background: '#ff4d4d', color: 'white', borderRadius: '50%', 
-    width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', 
-    fontSize: '10px', fontWeight: 'bold', boxShadow: '0 2px 4px rgba(0,0,0,0.2)', zIndex: 10
+  page: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    padding: '40px 20px 60px',
+    background: 'var(--bg)',
   },
-  addMoreCircle: { height: '80px', borderRadius: '10px', border: '2px dashed #cbdad2', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f9fbf9' },
-  submitBtn: { width: '100%', padding: '18px', background: 'linear-gradient(135deg, #2d6a4f, #52b788)', color: '#fff', border: 'none', borderRadius: '14px', cursor: 'pointer', fontWeight: '600', fontSize: '16px', marginTop: '16px', boxShadow: '0 4px 15px rgba(45,106,79,0.2)' },
-  submitBtnDisabled: { opacity: 0.6, cursor: 'not-allowed', background: '#9eb8ad' },
-  clearBtn: { width: '100%', background: 'none', border: 'none', color: '#8aaa96', fontSize: '12px', marginTop: '12px', cursor: 'pointer', textDecoration: 'underline' },
-  errorContainer: { color: '#d32f2f', fontSize: '13px', margin: '15px 0', textAlign: 'center', background: '#ffebee', padding: '10px', borderRadius: '8px' },
-  loaderText: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }
+
+  hero: {
+    textAlign: 'center',
+    maxWidth: '480px',
+    marginBottom: '32px',
+  },
+  heroEyebrow: {
+    fontSize: '11px',
+    fontWeight: '700',
+    letterSpacing: '1.2px',
+    textTransform: 'uppercase',
+    color: 'var(--leaf)',
+    marginBottom: '12px',
+  },
+  heroHeading: {
+    fontFamily: "'Playfair Display', serif",
+    fontSize: '34px',
+    fontWeight: '700',
+    color: 'var(--text-1)',
+    lineHeight: '1.2',
+    letterSpacing: '-0.5px',
+    marginBottom: '14px',
+  },
+  heroSub: {
+    fontSize: '15px',
+    color: 'var(--text-3)',
+    lineHeight: '1.65',
+  },
+
+  card: {
+    width: '100%',
+    maxWidth: '460px',
+    padding: '28px',
+    marginBottom: '24px',
+  },
+
+  dropZone: {
+    border: '2px dashed var(--border)',
+    borderRadius: 'var(--r-md)',
+    minHeight: '180px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    transition: 'border-color 0.2s, background 0.2s',
+    background: 'var(--mist)',
+    marginBottom: '18px',
+  },
+  dropZoneActive: {
+    border: '2px solid var(--leaf)',
+    background: 'var(--sage)',
+  },
+  dropZoneDrag: {
+    border: '2px solid var(--mid)',
+    background: 'var(--sage)',
+    transform: 'scale(1.01)',
+  },
+
+  dropContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '20px',
+  },
+  cameraRing: {
+    width: '64px',
+    height: '64px',
+    borderRadius: '50%',
+    background: 'var(--card)',
+    border: '1px solid var(--border)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: 'var(--shadow-sm)',
+  },
+  dropTitle: {
+    fontSize: '15px',
+    fontWeight: '600',
+    color: 'var(--text-2)',
+    margin: 0,
+  },
+  dropHint: {
+    fontSize: '12px',
+    color: 'var(--text-4)',
+    margin: 0,
+    textAlign: 'center',
+  },
+
+  previewGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, 1fr)',
+    gap: '10px',
+    padding: '16px',
+    width: '100%',
+  },
+  previewItem: {
+    position: 'relative',
+    height: '90px',
+  },
+  previewImg: {
+    width: '100%',
+    height: '90px',
+    objectFit: 'cover',
+    borderRadius: 'var(--r-sm)',
+    border: '1px solid var(--border)',
+  },
+  removeBtn: {
+    position: 'absolute',
+    top: '-7px',
+    right: '-7px',
+    background: '#DC2626',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '50%',
+    width: '20px',
+    height: '20px',
+    fontSize: '9px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: 'var(--shadow-sm)',
+    zIndex: 10,
+  },
+  addMoreTile: {
+    height: '90px',
+    borderRadius: 'var(--r-sm)',
+    border: '2px dashed var(--border)',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '2px',
+    background: 'var(--mist)',
+    cursor: 'pointer',
+  },
+  addMorePlus: {
+    fontSize: '22px',
+    color: 'var(--leaf)',
+    lineHeight: 1,
+  },
+  addMoreLabel: {
+    fontSize: '10px',
+    fontWeight: '600',
+    color: 'var(--text-3)',
+    letterSpacing: '0.3px',
+  },
+
+  tipRow: {
+    display: 'flex',
+    gap: '8px',
+    alignItems: 'flex-start',
+    background: 'var(--mist)',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--r-sm)',
+    padding: '10px 12px',
+    marginBottom: '20px',
+    fontSize: '12px',
+    color: 'var(--text-2)',
+    lineHeight: '1.5',
+  },
+  tipIcon: { fontSize: '15px', flexShrink: 0 },
+  tipText: { margin: 0 },
+
+  field: { marginBottom: '20px' },
+  fieldLabel: {
+    display: 'block',
+    fontSize: '12px',
+    fontWeight: '700',
+    color: 'var(--text-2)',
+    marginBottom: '6px',
+    letterSpacing: '0.2px',
+  },
+  optional: { fontWeight: '400', color: 'var(--text-4)' },
+  input: {
+    width: '100%',
+    padding: '12px 14px',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--r-sm)',
+    fontSize: '14px',
+    color: 'var(--text-1)',
+    background: 'var(--mist)',
+    outline: 'none',
+    fontFamily: 'inherit',
+    boxSizing: 'border-box',
+  },
+
+  errorBox: {
+    background: '#FFF0F0',
+    border: '1px solid #FFCDD2',
+    borderRadius: 'var(--r-sm)',
+    padding: '10px 14px',
+    fontSize: '13px',
+    color: '#C62828',
+    marginBottom: '16px',
+    lineHeight: '1.4',
+  },
+
+  cta: {
+    width: '100%',
+    padding: '17px',
+    background: 'var(--primary)',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 'var(--r-full)',
+    fontSize: '15px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    letterSpacing: '0.3px',
+    boxShadow: '0 4px 16px rgba(27,67,50,0.25)',
+    transition: 'opacity 0.2s, transform 0.15s',
+  },
+  ctaDisabled: {
+    opacity: 0.45,
+    cursor: 'not-allowed',
+    boxShadow: 'none',
+  },
+  clearLink: {
+    display: 'block',
+    margin: '14px auto 0',
+    background: 'none',
+    border: 'none',
+    color: 'var(--text-4)',
+    fontSize: '12px',
+    cursor: 'pointer',
+    textDecoration: 'underline',
+  },
+
+  trustBar: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '12px',
+    justifyContent: 'center',
+    maxWidth: '460px',
+  },
+  trustItem: {
+    fontSize: '11px',
+    color: 'var(--text-3)',
+    background: 'var(--card)',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--r-full)',
+    padding: '5px 12px',
+  },
 }
 
-function LeafIcon() { return <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M12 22C6 22 2 16 2 10C2 10 8 4 16 6C18 10 16 16 12 22Z" fill="#52b788" stroke="#2d6a4f" strokeWidth="1.5"/></svg> }
-function CameraIcon() { return <svg width="40" height="40" viewBox="0 0 24 24" fill="none"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" stroke="#52b788" strokeWidth="1.5"/></svg> }
+function CameraIcon() {
+  return (
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--leaf)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+      <circle cx="12" cy="13" r="4" />
+    </svg>
+  )
+}

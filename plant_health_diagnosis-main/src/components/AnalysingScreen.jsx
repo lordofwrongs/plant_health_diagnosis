@@ -207,8 +207,8 @@ function LeafAnimated() {
 
 const styles = {
   page: {
-    minHeight: '100vh',
-    background: 'linear-gradient(160deg, #f0faf4 0%, #faf8f3 60%, #e8f5e9 100%)',
+    flex: 1,
+    background: 'var(--bg)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',

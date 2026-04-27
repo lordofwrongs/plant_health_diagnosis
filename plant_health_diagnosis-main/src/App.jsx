@@ -4,27 +4,36 @@ import AnalysingScreen from './components/AnalysingScreen.jsx'
 import ResultsScreen from './components/ResultsScreen.jsx'
 import HistoryScreen from './components/HistoryScreen.jsx'
 
+// ── BotanIQ logo mark + wordmark ─────────────────────────────────────────────
+function BotanIQMark({ size = 32 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" fill="none" aria-hidden="true">
+      <circle cx="20" cy="20" r="19" fill="#1B4332" />
+      <path d="M20 33C13 33 8 26.5 8 20C8 20 15 12 25 14.5C27.5 19.5 25 27 20 33Z" fill="#52B788" />
+      <path d="M20 33C20 33 17 27 19 20.5" stroke="#95D5B2" strokeWidth="1.4" strokeLinecap="round" />
+      <circle cx="27" cy="13" r="2.5" fill="#95D5B2" opacity="0.6" />
+    </svg>
+  )
+}
+
 export default function App() {
-  const [screen, setScreen] = useState('upload') 
+  const [screen, setScreen] = useState('upload')
   const [activeLogId, setActiveLogId] = useState(null)
   const [result, setResult] = useState(null)
   const [historyContext, setHistoryContext] = useState([])
-  
-  // Initialize Preferences from LocalStorage
+
   const [preferences, setPreferences] = useState(() => {
     const saved = localStorage.getItem('plant_care_prefs')
     return saved ? JSON.parse(saved) : { language: 'English' }
   })
   const [showSettings, setShowSettings] = useState(false)
 
-  // Set Guest ID for tracking
   useEffect(() => {
     if (!localStorage.getItem('plant_care_guest_id')) {
       localStorage.setItem('plant_care_guest_id', `guest_${Math.random().toString(36).slice(2, 11)}`)
     }
   }, [])
 
-  // Sync Preferences to LocalStorage
   useEffect(() => {
     localStorage.setItem('plant_care_prefs', JSON.stringify(preferences))
   }, [preferences])
@@ -40,7 +49,7 @@ export default function App() {
 
   const handleResultReady = (data) => {
     setResult(data)
-    setHistoryContext([]) 
+    setHistoryContext([])
     setScreen('results')
   }
 
@@ -51,87 +60,92 @@ export default function App() {
     setScreen('upload')
   }
 
-  // Called by AnalysingScreen when backend returns an error or times out
   const handleAnalysisError = () => {
     setActiveLogId(null)
     setResult(null)
     setScreen('upload')
   }
 
+  const LANGUAGES = ['English', 'Hindi', 'Tamil', 'Telugu']
+
   return (
     <div style={styles.appContainer}>
+      {/* ── Navigation ──────────────────────────────────────── */}
       <nav style={styles.nav}>
-        <div style={styles.navLinks}>
-          <button 
-            onClick={handleReset} 
-            style={{...styles.navLink, borderBottom: screen === 'upload' ? '3px solid #2d6a4f' : 'none'}}
+        {/* Logo */}
+        <button onClick={handleReset} style={styles.logoBtn} aria-label="BotanIQ home">
+          <BotanIQMark size={34} />
+          <span style={styles.wordmark}>Botan<span style={styles.wordmarkIQ}>IQ</span></span>
+        </button>
+
+        {/* Centre tabs */}
+        <div style={styles.navTabs}>
+          <button
+            onClick={handleReset}
+            style={{ ...styles.navTab, ...(screen === 'upload' || screen === 'analysing' ? styles.navTabActive : {}) }}
           >
             Scan
+            {(screen === 'upload' || screen === 'analysing') && <span style={styles.tabDot} />}
           </button>
-          <button 
-            onClick={() => setScreen('history')} 
-            style={{...styles.navLink, borderBottom: screen === 'history' ? '3px solid #2d6a4f' : 'none'}}
+          <button
+            onClick={() => setScreen('history')}
+            style={{ ...styles.navTab, ...(screen === 'history' || screen === 'results' ? styles.navTabActive : {}) }}
           >
-            History
+            Garden
+            {(screen === 'history' || screen === 'results') && <span style={styles.tabDot} />}
           </button>
         </div>
-        
-        {/* Language Toggle */}
-        <button onClick={() => setShowSettings(!showSettings)} style={styles.settingsToggle}>
-          🌐 {preferences.language === 'English' ? 'EN' : preferences.language.substring(0, 2).toUpperCase()}
-        </button>
+
+        {/* Language selector */}
+        <div style={{ position: 'relative' }}>
+          <button onClick={() => setShowSettings(!showSettings)} style={styles.langToggle}>
+            <span style={styles.globeIcon}>🌐</span>
+            <span style={styles.langCode}>
+              {preferences.language === 'English' ? 'EN' : preferences.language.slice(0, 2).toUpperCase()}
+            </span>
+          </button>
+
+          {showSettings && (
+            <div style={styles.langDropdown}>
+              <p style={styles.langDropdownLabel}>Display language</p>
+              {LANGUAGES.map(lang => (
+                <button
+                  key={lang}
+                  onClick={() => { setPreferences({ ...preferences, language: lang }); setShowSettings(false) }}
+                  style={{
+                    ...styles.langOption,
+                    ...(preferences.language === lang ? styles.langOptionActive : {}),
+                  }}
+                >
+                  {lang}
+                  {preferences.language === lang && <span style={styles.langCheck}>✓</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </nav>
 
-      {/* Language Selection Bar */}
-      {showSettings && (
-        <div style={styles.settingsBar}>
-          <span style={styles.settingsLabel}>Preferred Language:</span>
-          {['English', 'Hindi', 'Tamil', 'Telugu'].map(lang => (
-            <button 
-              key={lang}
-              onClick={() => { 
-                setPreferences({ ...preferences, language: lang }); 
-                setShowSettings(false); 
-              }}
-              style={{
-                ...styles.langBtn,
-                background: preferences.language === lang ? '#2d6a4f' : '#f0f4f2',
-                color: preferences.language === lang ? '#fff' : '#2d6a4f',
-                border: preferences.language === lang ? '1px solid #2d6a4f' : '1px solid #cbdad2'
-              }}
-            >
-              {lang}
-            </button>
-          ))}
-        </div>
-      )}
-
+      {/* ── Screens ─────────────────────────────────────────── */}
       <main style={styles.mainContent}>
         {screen === 'upload' && (
-          <UploadScreen 
-            onUploadComplete={handleUploadComplete} 
-            userLanguage={preferences.language} // <--- PASSING TO SUPABASE INSERT
-          />
+          <UploadScreen onUploadComplete={handleUploadComplete} userLanguage={preferences.language} />
         )}
-        
+
         {screen === 'analysing' && (
-          <AnalysingScreen
-            logId={activeLogId}
-            onResultReady={handleResultReady}
-            onError={handleAnalysisError}
-          />
+          <AnalysingScreen logId={activeLogId} onResultReady={handleResultReady} onError={handleAnalysisError} />
         )}
-        
+
         {screen === 'results' && (
-          <ResultsScreen 
-            result={result} 
-            userLanguage={preferences.language} // <--- PASSING FOR DISPLAY
-            onReset={handleReset} 
-            onBack={() => setScreen('history')} 
-            allScans={historyContext} 
+          <ResultsScreen
+            result={result}
+            userLanguage={preferences.language}
+            onReset={handleReset}
+            onBack={() => setScreen('history')}
+            allScans={historyContext}
           />
         )}
-        
+
         {screen === 'history' && (
           <HistoryScreen
             onSelectResult={(data, fullHistory) => {
@@ -148,82 +162,146 @@ export default function App() {
 }
 
 const styles = {
-  appContainer: { 
-    minHeight: '100vh', 
-    display: 'flex', 
-    flexDirection: 'column', 
-    background: '#f8faf9',
-    fontFamily: 'Inter, system-ui, sans-serif'
+  appContainer: {
+    minHeight: '100vh',
+    display: 'flex',
+    flexDirection: 'column',
+    background: 'var(--bg)',
+    fontFamily: "'DM Sans', -apple-system, sans-serif",
   },
-  nav: { 
-    display: 'flex', 
-    justifyContent: 'space-between', 
+
+  // ── Nav ──────────────────────────────────────────────────
+  nav: {
+    display: 'flex',
     alignItems: 'center',
-    padding: '0 24px', 
-    background: '#fff', 
-    borderBottom: '1px solid #e8f5e9',
+    justifyContent: 'space-between',
+    padding: '0 20px',
+    height: '62px',
+    background: '#fff',
+    borderBottom: '1px solid var(--border)',
     position: 'sticky',
     top: 0,
-    zIndex: 100,
-    height: '64px',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
+    zIndex: 200,
+    boxShadow: 'var(--shadow-xs)',
   },
-  navLinks: { 
-    display: 'flex', 
-    gap: '24px', 
-    height: '100%' 
-  },
-  navLink: { 
-    background: 'none', 
-    border: 'none', 
-    color: '#2d6a4f', 
-    fontWeight: '700', 
-    cursor: 'pointer', 
-    fontSize: '13px',
-    textTransform: 'uppercase',
-    letterSpacing: '1px',
-    padding: '0 4px',
-    transition: 'all 0.2s',
+
+  logoBtn: {
     display: 'flex',
-    alignItems: 'center'
-  },
-  settingsToggle: {
-    background: '#2d6a4f',
-    color: '#ffffff',
+    alignItems: 'center',
+    gap: '10px',
+    background: 'none',
     border: 'none',
-    borderRadius: '20px',
-    padding: '8px 16px',
-    fontSize: '12px',
-    fontWeight: '800',
     cursor: 'pointer',
-    boxShadow: '0 4px 12px rgba(45, 106, 79, 0.2)',
-    transition: 'transform 0.2s ease',
+    padding: 0,
+    flexShrink: 0,
+  },
+  wordmark: {
+    fontFamily: "'Playfair Display', serif",
+    fontSize: '20px',
+    fontWeight: '700',
+    color: 'var(--primary)',
+    letterSpacing: '-0.3px',
+  },
+  wordmarkIQ: {
+    color: 'var(--leaf)',
+    fontStyle: 'italic',
+  },
+
+  navTabs: {
     display: 'flex',
-    alignItems: 'center',
-    gap: '6px'
+    gap: '4px',
+    position: 'absolute',
+    left: '50%',
+    transform: 'translateX(-50%)',
   },
-  settingsBar: {
-    background: '#fff',
-    padding: '16px 24px',
-    borderBottom: '1px solid #e8f5e9',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    flexWrap: 'wrap'
-  },
-  settingsLabel: { 
-    fontSize: '12px', 
-    fontWeight: '700', 
-    color: '#4a6358', 
-    marginRight: '8px' 
-  },
-  langBtn: {
-    padding: '6px 16px',
-    borderRadius: '10px',
-    fontSize: '12px',
+  navTab: {
+    position: 'relative',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    fontSize: '13px',
     fontWeight: '600',
-    cursor: 'pointer',
-    transition: 'all 0.2s'
+    color: 'var(--text-3)',
+    padding: '8px 16px',
+    borderRadius: 'var(--r-full)',
+    letterSpacing: '0.3px',
+    transition: 'color 0.2s, background 0.2s',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '3px',
   },
-  mainContent: { flex: 1, display: 'flex', flexDirection: 'column' }
+  navTabActive: {
+    color: 'var(--primary)',
+    background: 'var(--mist)',
+  },
+  tabDot: {
+    width: '4px',
+    height: '4px',
+    borderRadius: '50%',
+    background: 'var(--leaf)',
+    display: 'block',
+  },
+
+  langToggle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '5px',
+    background: 'var(--mist)',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--r-full)',
+    padding: '6px 12px',
+    cursor: 'pointer',
+    fontSize: '12px',
+    color: 'var(--primary)',
+  },
+  globeIcon: { fontSize: '14px' },
+  langCode: { fontWeight: '700', letterSpacing: '0.5px' },
+
+  langDropdown: {
+    position: 'absolute',
+    top: 'calc(100% + 8px)',
+    right: 0,
+    background: '#fff',
+    borderRadius: 'var(--r-md)',
+    boxShadow: 'var(--shadow-lg)',
+    padding: '12px 8px',
+    minWidth: '160px',
+    zIndex: 300,
+    border: '1px solid var(--border)',
+  },
+  langDropdownLabel: {
+    fontSize: '11px',
+    fontWeight: '700',
+    color: 'var(--text-4)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.8px',
+    padding: '0 8px 8px',
+    borderBottom: '1px solid var(--border)',
+    marginBottom: '6px',
+  },
+  langOption: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    padding: '9px 12px',
+    borderRadius: 'var(--r-sm)',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    fontSize: '14px',
+    color: 'var(--text-2)',
+    fontWeight: '500',
+    textAlign: 'left',
+    transition: 'background 0.15s',
+  },
+  langOptionActive: {
+    background: 'var(--mist)',
+    color: 'var(--primary)',
+    fontWeight: '700',
+  },
+  langCheck: { color: 'var(--leaf)', fontWeight: '900', fontSize: '13px' },
+
+  mainContent: { flex: 1, display: 'flex', flexDirection: 'column' },
 }
