@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { supabase } from '../supabaseClient.js';
 
 export default function ResultsScreen({ result, userLanguage, onReset, onBack, allScans = [] }) {
@@ -6,44 +6,35 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
 
   const getDynamicName = () => {
     if (!result) return 'New Discovery';
-    
     const meta = result.vernacular_metadata;
     const currentLangKey = userLanguage?.toLowerCase();
-
-    // If no metadata or English, just return the standard name
     if (!meta || !currentLangKey || currentLangKey === 'english') {
       return result.PlantName || 'New Discovery';
     }
-
-    // This looks for ANY key in your JSON that CONTAINS the language name
-    const matchingKey = Object.keys(meta).find(k => 
-      k.toLowerCase().includes(currentLangKey)
-    );
-
+    const matchingKey = Object.keys(meta).find(k => k.toLowerCase().includes(currentLangKey));
     if (matchingKey && meta[matchingKey]) {
       const localName = meta[matchingKey];
       const englishRef = meta.english || result.PlantName;
       return `${localName} (${englishRef})`;
     }
-
     return result.PlantName || 'New Discovery';
   };
 
   const previousScan = allScans.length > 1 ? allScans[1] : null;
 
-  const healthColor = result?.HealthColor 
-    ? { bg: `${result.HealthColor}15`, text: result.HealthColor, dot: result.HealthColor }
-    : { bg: '#f0f4f2', text: '#2d6a4f', dot: '#52b788' };
+  const healthColor = result?.HealthColor
+    ? { bg: `${result.HealthColor}18`, text: result.HealthColor, dot: result.HealthColor }
+    : { bg: 'var(--mist)', text: 'var(--mid)', dot: 'var(--leaf)' };
 
-  const recommendations = result?.CarePlan 
-    ? result.CarePlan.split('\n').filter(line => line.trim() !== '') 
+  const recommendations = result?.CarePlan
+    ? result.CarePlan.split('\n').filter(line => line.trim() !== '')
     : [];
 
   const handleFeedback = async (isCorrect) => {
     setFeedbackStatus(isCorrect ? 'correct' : 'incorrect');
     let userCorrection = null;
     if (!isCorrect) {
-      userCorrection = window.prompt("What is the correct name of this plant? (Optional)");
+      userCorrection = window.prompt('What is the correct name of this plant? (Optional)');
     }
     try {
       await supabase
@@ -51,175 +42,463 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
         .update({ IsCorrect: isCorrect, UserCorrection: userCorrection })
         .eq('id', result.id);
     } catch (err) {
-      console.error("Feedback Error:", err);
+      console.error('Feedback Error:', err);
     }
   };
 
   return (
     <div style={styles.page}>
       <div style={styles.wrapper}>
+
+        {/* Nav row */}
         <div style={styles.navRow}>
-          <button onClick={onBack} style={styles.backBtn}>← My Garden</button>
-          <button onClick={onReset} style={styles.newScanBtn}>New Scan</button>
+          <button onClick={onBack} style={styles.backBtn}>
+            <span style={styles.backArrow}>←</span> My Garden
+          </button>
+          <button onClick={onReset} style={styles.newScanBtn}>+ New Scan</button>
         </div>
 
+        {/* Weather alert */}
         {result?.WeatherAlert && (
-          <div style={styles.weatherAlertCard}>
-            <div style={styles.alertIcon}>⚠️</div>
-            <div style={styles.alertContent}>
-              <h4 style={styles.alertTitle}>Climate Protection Alert</h4>
-              <p style={styles.alertText}>{result.WeatherAlert}</p>
+          <div className="fade-up" style={styles.weatherCard}>
+            <span style={styles.weatherIcon}>⚠️</span>
+            <div>
+              <p style={styles.weatherTitle}>Climate Alert</p>
+              <p style={styles.weatherText}>{result.WeatherAlert}</p>
             </div>
           </div>
         )}
 
-        <div style={styles.mainCard}>
-          <div style={styles.imageSection}>
-            <img src={result?.image_url} alt="Scanned plant" style={styles.mainImage} />
-            <div style={{ ...styles.healthBadge, backgroundColor: healthColor.bg, color: healthColor.text }}>
-              <div style={{ ...styles.statusDot, backgroundColor: healthColor.dot }} />
-              {result?.HealthStatus || 'Analyzing...'}
+        {/* Hero card */}
+        <div className="fade-up verdant-card" style={styles.heroCard}>
+          <div style={styles.imgWrap}>
+            <img src={result?.image_url} alt="Scanned plant" style={styles.heroImg} />
+            <div style={{ ...styles.healthPill, background: healthColor.bg, color: healthColor.text }}>
+              <span style={{ ...styles.healthDot, background: healthColor.dot }} />
+              {result?.HealthStatus || 'Analysing...'}
             </div>
           </div>
 
-          <div style={styles.infoSection}>
-            <div style={styles.titleRow}>
+          <div style={styles.heroInfo}>
+            <div style={styles.nameRow}>
               <h1 style={styles.plantName}>{getDynamicName()}</h1>
               {previousScan && (
-                <div style={styles.trendChip}>
-                  {result?.HealthStatus === previousScan?.HealthStatus ? 'Stable' : 'Status Updated'}
-                </div>
+                <span style={styles.trendChip}>
+                  {result?.HealthStatus === previousScan?.HealthStatus ? 'Stable' : 'Changed'}
+                </span>
               )}
             </div>
-            <p style={styles.scientificName}>{result?.ScientificName}</p>
-            
-            {/* VERNACULAR METADATA DISPLAY SECTION */}
+            <p style={styles.sciName}>{result?.ScientificName}</p>
+
             {result?.vernacular_metadata && (
-              <div style={styles.vernacularRow}>
-                {Object.entries(result.vernacular_metadata).map(([lang, name]) => (
+              <div style={styles.vernRow}>
+                {Object.entries(result.vernacular_metadata).map(([lang, name]) =>
                   lang !== 'english' && (
-                    <span key={lang} style={styles.vernacularBadge}>
+                    <span key={lang} style={styles.vernBadge}>
                       {lang.charAt(0).toUpperCase() + lang.slice(1)}: {name}
                     </span>
                   )
-                ))}
+                )}
               </div>
             )}
 
-            <div style={styles.accuracyTag}>AI Confidence: {result?.AccuracyScore}%</div>
+            <div style={styles.confidenceTag}>
+              <span style={styles.confidenceLabel}>AI Confidence</span>
+              <span style={styles.confidenceValue}>{result?.AccuracyScore}%</span>
+            </div>
           </div>
         </div>
 
+        {/* Health journey */}
         {previousScan && (
-          <div style={styles.sectionCard}>
+          <div className="fade-up-delay-1 verdant-card" style={styles.section}>
             <h3 style={styles.sectionTitle}>Health Journey</h3>
-            <div style={styles.comparisonGrid}>
-              <div style={styles.compItem}>
-                <span style={styles.compLabel}>Previous Scan</span>
-                <span style={styles.compValue}>
+            <div style={styles.journeyGrid}>
+              <div style={styles.journeyItem}>
+                <span style={styles.journeyLabel}>Previous scan</span>
+                <span style={styles.journeyValue}>
                   {new Date(previousScan.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                 </span>
               </div>
-              <div style={styles.compItem}>
-                <span style={styles.compLabel}>Previous Health</span>
-                <span style={{ ...styles.compValue, color: previousScan.HealthColor || '#2d6a4f' }}>
+              <div style={styles.journeyItem}>
+                <span style={styles.journeyLabel}>Previous status</span>
+                <span style={{ ...styles.journeyValue, color: previousScan.HealthColor || 'var(--mid)' }}>
                   {previousScan.HealthStatus}
                 </span>
               </div>
             </div>
-            <div style={styles.timelineDivider} />
+            <div style={styles.divider} />
             <p style={styles.trendNote}>
-              {result?.HealthStatus === previousScan?.HealthStatus 
-                ? "Plant conditions remain consistent with the last observation." 
-                : "A change in health status has been detected since your last scan."}
+              {result?.HealthStatus === previousScan?.HealthStatus
+                ? 'Plant conditions remain consistent with the last observation.'
+                : 'A change in health status has been detected since your last scan.'}
             </p>
           </div>
         )}
 
-        <div style={styles.sectionCard}>
+        {/* Visual analysis */}
+        <div className="fade-up-delay-1 verdant-card" style={styles.section}>
           <h3 style={styles.sectionTitle}>Visual Analysis</h3>
-          <p style={styles.analysisBody}>{result?.VisualAnalysis}</p>
+          <p style={styles.bodyText}>{result?.VisualAnalysis}</p>
         </div>
 
-        <div style={styles.sectionCard}>
+        {/* Care plan */}
+        <div className="fade-up-delay-2 verdant-card" style={styles.section}>
           <h3 style={styles.sectionTitle}>Care Recommendations</h3>
-          <div style={styles.remedyList}>
+          <div style={styles.stepList}>
             {recommendations.map((step, i) => (
-              <div key={i} style={styles.remedyItem}>
-                <div style={styles.remedyIndex}>{i + 1}</div>
-                <p style={styles.remedyText}>{step.replace(/[•*-]/g, '').trim()}</p>
+              <div key={i} style={styles.stepItem}>
+                <div style={styles.stepNum}>{i + 1}</div>
+                <p style={styles.stepText}>{step.replace(/[•*-]/g, '').trim()}</p>
               </div>
             ))}
           </div>
         </div>
 
+        {/* Expert tip */}
         {result?.ExpertTip && (
-          <div style={styles.expertTipBox}>
-            <span style={styles.tipLabel}>PRO TIP</span>
-            <p style={styles.tipText}>{result.ExpertTip}</p>
+          <div className="fade-up-delay-2" style={styles.expertBox}>
+            <span style={styles.expertLabel}>PRO TIP</span>
+            <p style={styles.expertText}>{result.ExpertTip}</p>
           </div>
         )}
 
-        <div style={styles.feedbackContainer}>
+        {/* Photo tip */}
+        {result?.error_details && (
+          <div className="fade-up-delay-2" style={styles.photoTipBox}>
+            <span style={styles.photoTipLabel}>📸 PHOTO TIP</span>
+            <p style={styles.expertText}>Next time: {result.error_details}</p>
+          </div>
+        )}
+
+        {/* Feedback */}
+        <div className="fade-up-delay-3" style={styles.feedbackBox}>
           {feedbackStatus ? (
-            <p style={styles.feedbackThanks}>Thank you for helping our AI learn! 🌱</p>
+            <p style={styles.thankYou}>Thank you for helping BotanIQ learn! 🌱</p>
           ) : (
             <>
-              <p style={styles.feedbackTitle}>Was this analysis accurate?</p>
-              <div style={styles.feedbackButtons}>
+              <p style={styles.feedbackQ}>Was this analysis accurate?</p>
+              <div style={styles.feedbackBtns}>
                 <button style={styles.fbBtn} onClick={() => handleFeedback(true)}>Yes, correct</button>
                 <button style={styles.fbBtn} onClick={() => handleFeedback(false)}>No, incorrect</button>
               </div>
             </>
           )}
         </div>
+
       </div>
     </div>
   );
 }
 
 const styles = {
-  page: { minHeight: '100vh', background: '#f8faf9', padding: '20px' },
-  wrapper: { maxWidth: '500px', margin: '0 auto', paddingBottom: '40px' },
-  navRow: { display: 'flex', justifyContent: 'space-between', marginBottom: '20px' },
-  backBtn: { background: 'none', border: 'none', color: '#2d6a4f', fontWeight: '600', cursor: 'pointer' },
-  newScanBtn: { background: '#2d6a4f', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '20px', fontWeight: '600', cursor: 'pointer' },
-  weatherAlertCard: { display: 'flex', gap: '15px', background: '#fff4e5', border: '1px solid #ffe2b3', padding: '16px', borderRadius: '16px', marginBottom: '20px', alignItems: 'center' },
-  alertIcon: { fontSize: '24px' },
-  alertTitle: { margin: 0, fontSize: '14px', color: '#663c00', fontWeight: '700' },
-  alertText: { margin: '2px 0 0 0', fontSize: '13px', color: '#663c00', lineHeight: '1.4' },
-  mainCard: { background: '#fff', borderRadius: '24px', overflow: 'hidden', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', marginBottom: '20px' },
-  imageSection: { position: 'relative', height: '300px' },
-  mainImage: { width: '100%', height: '100%', objectFit: 'cover' },
-  healthBadge: { position: 'absolute', bottom: '16px', left: '16px', display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', borderRadius: '30px', fontSize: '14px', fontWeight: '700', backdropFilter: 'blur(10px)' },
-  statusDot: { width: '8px', height: '8px', borderRadius: '50%' },
-  infoSection: { padding: '24px' },
-  titleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' },
-  plantName: { margin: 0, fontSize: '24px', color: '#1a3a2a', fontFamily: "'Playfair Display', serif", flex: 1, lineHeight: '1.2' },
-  trendChip: { background: '#e8f5e9', color: '#2d6a4f', padding: '4px 12px', borderRadius: '20px', fontSize: '11px', fontWeight: '700', whiteSpace: 'nowrap' },
-  scientificName: { margin: '4px 0 12px 0', fontSize: '16px', color: '#6a8378', fontStyle: 'italic' },
-  vernacularRow: { marginTop: '10px', marginBottom: '15px', display: 'flex', gap: '8px', flexWrap: 'wrap' },
-  vernacularBadge: { fontSize: '12px', color: '#2d6a4f', background: '#e8f5e9', padding: '4px 10px', borderRadius: '6px', fontWeight: '600' },
-  accuracyTag: { display: 'inline-block', background: '#f0f4f2', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', color: '#2d6a4f', fontWeight: '700' },
-  sectionCard: { background: '#fff', padding: '24px', borderRadius: '20px', marginBottom: '16px', border: '1px solid #f0f4f2' },
-  sectionTitle: { margin: '0 0 12px 0', fontSize: '15px', color: '#1a3a2a', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' },
-  analysisBody: { fontSize: '15px', color: '#4a6358', lineHeight: '1.6' },
-  comparisonGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '15px' },
-  compItem: { display: 'flex', flexDirection: 'column', gap: '4px' },
-  compLabel: { fontSize: '11px', color: '#8aaa96', fontWeight: '600' },
-  compValue: { fontSize: '14px', color: '#1a3a2a', fontWeight: '500' },
-  timelineDivider: { height: '1px', background: '#f0f4f2', marginBottom: '12px' },
-  trendNote: { fontSize: '13px', color: '#6a8378', margin: 0, fontStyle: 'italic' },
-  remedyList: { display: 'flex', flexDirection: 'column', gap: '16px' },
-  remedyItem: { display: 'flex', gap: '12px', alignItems: 'flex-start' },
-  remedyIndex: { width: '22px', height: '22px', background: '#2d6a4f', color: '#fff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', flexShrink: 0 },
-  remedyText: { margin: 0, fontSize: '14px', color: '#4a6358', lineHeight: '1.6' },
-  expertTipBox: { background: '#1b4332', padding: '24px', borderRadius: '24px', marginBottom: '20px' },
-  tipLabel: { background: '#52b788', color: '#fff', fontSize: '10px', padding: '2px 8px', borderRadius: '4px', fontWeight: '900', marginBottom: '10px', display: 'inline-block' },
-  tipText: { margin: 0, color: '#d8f3dc', fontSize: '14px', lineHeight: '1.6' },
-  feedbackContainer: { textAlign: 'center', padding: '20px' },
-  feedbackTitle: { fontSize: '14px', color: '#6a8378', marginBottom: '12px' },
-  feedbackButtons: { display: 'flex', justifyContent: 'center', gap: '12px' },
-  fbBtn: { padding: '10px 20px', background: '#fff', border: '1px solid #cbdad2', borderRadius: '12px', cursor: 'pointer', fontSize: '14px', color: '#2d6a4f', fontWeight: '600' },
-  feedbackThanks: { color: '#2d6a4f', fontWeight: '600' }
+  page: {
+    flex: 1,
+    background: 'var(--bg)',
+    padding: '20px',
+  },
+  wrapper: {
+    maxWidth: '520px',
+    margin: '0 auto',
+    paddingBottom: '48px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+  },
+
+  navRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  backBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    background: 'none',
+    border: 'none',
+    color: 'var(--mid)',
+    fontWeight: '600',
+    fontSize: '14px',
+    cursor: 'pointer',
+    padding: '4px 0',
+  },
+  backArrow: { fontSize: '16px' },
+  newScanBtn: {
+    background: 'var(--primary)',
+    color: '#fff',
+    border: 'none',
+    padding: '9px 18px',
+    borderRadius: 'var(--r-full)',
+    fontWeight: '700',
+    fontSize: '13px',
+    cursor: 'pointer',
+    letterSpacing: '0.2px',
+  },
+
+  weatherCard: {
+    display: 'flex',
+    gap: '14px',
+    alignItems: 'flex-start',
+    background: '#FEF7E0',
+    border: '1px solid #F0D080',
+    padding: '16px',
+    borderRadius: 'var(--r-md)',
+  },
+  weatherIcon: { fontSize: '22px', flexShrink: 0 },
+  weatherTitle: { fontSize: '13px', fontWeight: '700', color: '#78580A', marginBottom: '2px' },
+  weatherText: { fontSize: '13px', color: '#78580A', lineHeight: '1.4' },
+
+  heroCard: {
+    overflow: 'hidden',
+  },
+  imgWrap: {
+    position: 'relative',
+    height: '300px',
+  },
+  heroImg: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+  },
+  healthPill: {
+    position: 'absolute',
+    bottom: '16px',
+    left: '16px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '8px 16px',
+    borderRadius: 'var(--r-full)',
+    fontSize: '13px',
+    fontWeight: '700',
+    backdropFilter: 'blur(12px)',
+  },
+  healthDot: {
+    width: '8px',
+    height: '8px',
+    borderRadius: '50%',
+  },
+
+  heroInfo: { padding: '24px' },
+  nameRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: '10px',
+    marginBottom: '4px',
+  },
+  plantName: {
+    fontFamily: "'Playfair Display', serif",
+    fontSize: '26px',
+    fontWeight: '700',
+    color: 'var(--text-1)',
+    lineHeight: '1.2',
+    flex: 1,
+    margin: 0,
+  },
+  trendChip: {
+    background: 'var(--mist)',
+    color: 'var(--mid)',
+    padding: '4px 12px',
+    borderRadius: 'var(--r-full)',
+    fontSize: '11px',
+    fontWeight: '700',
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
+    border: '1px solid var(--border)',
+  },
+  sciName: {
+    fontSize: '15px',
+    color: 'var(--text-3)',
+    fontStyle: 'italic',
+    marginBottom: '12px',
+  },
+  vernRow: {
+    display: 'flex',
+    gap: '8px',
+    flexWrap: 'wrap',
+    marginBottom: '14px',
+  },
+  vernBadge: {
+    fontSize: '11px',
+    color: 'var(--mid)',
+    background: 'var(--sage)',
+    padding: '3px 10px',
+    borderRadius: 'var(--r-sm)',
+    fontWeight: '600',
+  },
+  confidenceTag: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    background: 'var(--mist)',
+    border: '1px solid var(--border)',
+    padding: '4px 12px',
+    borderRadius: 'var(--r-full)',
+  },
+  confidenceLabel: {
+    fontSize: '11px',
+    color: 'var(--text-3)',
+    fontWeight: '600',
+  },
+  confidenceValue: {
+    fontSize: '12px',
+    color: 'var(--primary)',
+    fontWeight: '800',
+  },
+
+  section: {
+    padding: '24px',
+  },
+  sectionTitle: {
+    fontSize: '11px',
+    fontWeight: '800',
+    letterSpacing: '1px',
+    textTransform: 'uppercase',
+    color: 'var(--text-3)',
+    marginBottom: '14px',
+  },
+  bodyText: {
+    fontSize: '15px',
+    color: 'var(--text-2)',
+    lineHeight: '1.65',
+  },
+
+  journeyGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '16px',
+    marginBottom: '16px',
+  },
+  journeyItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+  journeyLabel: {
+    fontSize: '11px',
+    color: 'var(--text-4)',
+    fontWeight: '600',
+    letterSpacing: '0.3px',
+  },
+  journeyValue: {
+    fontSize: '14px',
+    color: 'var(--text-1)',
+    fontWeight: '600',
+  },
+  divider: {
+    height: '1px',
+    background: 'var(--border)',
+    marginBottom: '12px',
+  },
+  trendNote: {
+    fontSize: '13px',
+    color: 'var(--text-3)',
+    fontStyle: 'italic',
+  },
+
+  stepList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+  },
+  stepItem: {
+    display: 'flex',
+    gap: '14px',
+    alignItems: 'flex-start',
+  },
+  stepNum: {
+    width: '24px',
+    height: '24px',
+    background: 'var(--primary)',
+    color: '#fff',
+    borderRadius: '50%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '11px',
+    fontWeight: '800',
+    flexShrink: 0,
+  },
+  stepText: {
+    margin: 0,
+    fontSize: '14px',
+    color: 'var(--text-2)',
+    lineHeight: '1.6',
+    paddingTop: '2px',
+  },
+
+  expertBox: {
+    background: 'var(--primary)',
+    padding: '24px',
+    borderRadius: 'var(--r-lg)',
+  },
+  expertLabel: {
+    background: 'var(--leaf)',
+    color: '#fff',
+    fontSize: '10px',
+    fontWeight: '900',
+    padding: '3px 8px',
+    borderRadius: '4px',
+    display: 'inline-block',
+    marginBottom: '10px',
+    letterSpacing: '0.5px',
+  },
+  expertText: {
+    margin: 0,
+    color: 'var(--sage)',
+    fontSize: '14px',
+    lineHeight: '1.65',
+  },
+
+  photoTipBox: {
+    background: '#78350F',
+    padding: '20px 24px',
+    borderRadius: 'var(--r-lg)',
+  },
+  photoTipLabel: {
+    background: '#F59E0B',
+    color: '#fff',
+    fontSize: '10px',
+    fontWeight: '900',
+    padding: '3px 8px',
+    borderRadius: '4px',
+    display: 'inline-block',
+    marginBottom: '10px',
+    letterSpacing: '0.5px',
+  },
+
+  feedbackBox: {
+    textAlign: 'center',
+    padding: '24px',
+    background: 'var(--card)',
+    borderRadius: 'var(--r-lg)',
+    border: '1px solid var(--border)',
+  },
+  feedbackQ: {
+    fontSize: '14px',
+    color: 'var(--text-3)',
+    marginBottom: '14px',
+  },
+  feedbackBtns: {
+    display: 'flex',
+    justifyContent: 'center',
+    gap: '10px',
+  },
+  fbBtn: {
+    padding: '10px 20px',
+    background: 'var(--mist)',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--r-full)',
+    cursor: 'pointer',
+    fontSize: '13px',
+    color: 'var(--primary)',
+    fontWeight: '600',
+  },
+  thankYou: {
+    color: 'var(--mid)',
+    fontWeight: '600',
+    fontSize: '14px',
+  },
 };

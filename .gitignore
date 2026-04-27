@@ -1,4 +1,4 @@
-.claude/
+.claude/settings.local.json
 supabase/.temp/
 node_modules/
 dist/
