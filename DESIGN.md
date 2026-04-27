@@ -113,6 +113,7 @@ Active tab: `--mist` background, `--primary` text, 4px leaf-green dot indicator 
 - **Health Journey** (shown only when ≥2 scans exist): previous date + status + trend note
 - **Visual Analysis**: AI narrative paragraph
 - **Care Recommendations**: numbered step list with `--primary` circle indicators
+- **Scan History Timeline** (shown only when ≥2 scans exist for this plant): full chronological list of all scans as tappable rows; each row shows date, health status coloured by `HealthColor`, and a chevron; the currently viewed scan is marked "Viewing" and is non-interactive; tapping another row switches the displayed result in place without navigating away
 - **Expert Tip**: dark forest green box with PRO TIP badge
 - **Photo Tip**: brown box (shown only when AI returned a `photo_tip`)
 - **Feedback widget**: "Was this accurate?" with Yes/No buttons; thanks message on submit
