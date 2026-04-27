@@ -2,10 +2,10 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 // ---------------------------------------------------------------------------
-// Structured logger — every entry is tagged with record_id for triage
+// Structured logger
 // ---------------------------------------------------------------------------
 function createLogger(recordId: string) {
-  const entries: Array<{ stage: string; level: string; message: string; ts: string; duration_ms?: number }> = []
+  const entries: Array<Record<string, unknown>> = []
   const timers: Record<string, number> = {}
 
   const emit = (level: string, stage: string, message: string, extra: Record<string, unknown> = {}) => {
@@ -18,7 +18,7 @@ function createLogger(recordId: string) {
   }
 
   return {
-    info:  (stage: string, msg: string) => emit('info',  stage, msg),
+    info:  (stage: string, msg: string, extra?: Record<string, unknown>) => emit('info',  stage, msg, extra),
     warn:  (stage: string, msg: string) => emit('warn',  stage, msg),
     error: (stage: string, msg: string, err?: unknown) => {
       const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err ?? '')
@@ -26,59 +26,66 @@ function createLogger(recordId: string) {
     },
     startTimer: (stage: string) => { timers[stage] = Date.now() },
     endTimer: (stage: string) => {
-      const duration_ms = timers[stage] ? Date.now() - timers[stage] : 0
-      emit('info', stage, `Completed in ${duration_ms}ms`, { duration_ms })
-      return duration_ms
+      const ms = timers[stage] ? Date.now() - timers[stage] : 0
+      emit('info', stage, `Completed in ${ms}ms`, { duration_ms: ms })
+      return ms
     },
     getLog: () => entries,
   }
 }
 
 // ---------------------------------------------------------------------------
-// fetch() with hard timeout — prevents hanging indefinitely on slow APIs
+// fetch with hard timeout
 // ---------------------------------------------------------------------------
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+async function fetchWithTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), ms)
   try {
-    return await fetch(url, { ...init, signal: controller.signal })
+    return await fetch(url, { ...init, signal: ctrl.signal })
   } finally {
-    clearTimeout(timer)
+    clearTimeout(t)
   }
 }
 
 // ---------------------------------------------------------------------------
-// Retry wrapper — retries on transient errors (5xx, timeouts) but not 4xx
+// fetch with retry — retries on 5xx / timeout, skips 4xx
 // ---------------------------------------------------------------------------
 async function fetchWithRetry(
-  url: string,
-  init: RequestInit,
-  timeoutMs: number,
-  logger: ReturnType<typeof createLogger>,
-  stage: string,
-  maxRetries = 2
+  url: string, init: RequestInit, timeoutMs: number,
+  logger: ReturnType<typeof createLogger>, stage: string, maxRetries = 2
 ): Promise<Response> {
-  let lastErr: Error = new Error('Unknown error')
+  let lastErr: Error = new Error('Unknown')
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const res = await fetchWithTimeout(url, init, timeoutMs)
-      // Don't retry client errors (4xx) — they won't improve on retry
       if (res.ok || (res.status >= 400 && res.status < 500)) return res
       lastErr = new Error(`HTTP ${res.status}`)
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e))
     }
     if (attempt < maxRetries) {
-      const delayMs = Math.pow(2, attempt) * 1500  // 1.5s, 3s
-      logger.warn(stage, `Attempt ${attempt + 1} failed: ${lastErr.message} — retrying in ${delayMs}ms`)
-      await new Promise(r => setTimeout(r, delayMs))
+      const delay = Math.pow(2, attempt) * 1500
+      logger.warn(stage, `Attempt ${attempt + 1} failed (${lastErr.message}) — retry in ${delay}ms`)
+      await new Promise(r => setTimeout(r, delay))
     }
   }
   throw lastErr
 }
 
 // ---------------------------------------------------------------------------
-// Safely parse AI JSON — handles pre-parsed objects and markdown code fences
+// Safe base64 encoder — chunked to avoid stack overflow on large images
+// ---------------------------------------------------------------------------
+function toBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
+  }
+  return btoa(binary)
+}
+
+// ---------------------------------------------------------------------------
+// Parse AI JSON — handles pre-parsed objects and markdown fences
 // ---------------------------------------------------------------------------
 function parseAIJson(content: unknown): Record<string, unknown> {
   if (content !== null && typeof content === 'object') return content as Record<string, unknown>
@@ -90,9 +97,160 @@ function parseAIJson(content: unknown): Record<string, unknown> {
 }
 
 // ---------------------------------------------------------------------------
+// Gemini direct API call (free tier, no OpenRouter margin)
+// ---------------------------------------------------------------------------
+async function callGemini(
+  apiKey: string,
+  systemPrompt: string,
+  userText: string,
+  imageBase64: string,
+  imageMimeType: string,
+  logger: ReturnType<typeof createLogger>,
+  stage: string,
+  temperature = 0.1,
+  timeoutMs = 35000
+): Promise<Record<string, unknown>> {
+  const res = await fetchWithRetry(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{
+          role: 'user',
+          parts: [
+            { text: userText },
+            { inlineData: { mimeType: imageMimeType, data: imageBase64 } },
+          ],
+        }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature,
+        },
+      }),
+    },
+    timeoutMs, logger, stage
+  )
+
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Gemini ${stage} HTTP ${res.status}: ${err.slice(0, 300)}`)
+  }
+
+  const data = await res.json()
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text
+  if (!text) throw new Error(`Gemini ${stage} empty response: ${JSON.stringify(data).slice(0, 300)}`)
+  return parseAIJson(text)
+}
+
+// ---------------------------------------------------------------------------
+// PlantNet — specialized plant identification (free, 500 req/day)
+// Returns null on failure rather than throwing — it's a best-effort enrichment
+// ---------------------------------------------------------------------------
+interface PlantNetResult {
+  scientificName: string
+  commonName: string
+  family: string
+  score: number
+  topCandidates: Array<{ name: string; common: string; score: number }>
+}
+
+async function identifyWithPlantNet(
+  apiKey: string,
+  imageBytes: Uint8Array,
+  mimeType: string,
+  logger: ReturnType<typeof createLogger>
+): Promise<PlantNetResult | null> {
+  try {
+    const formData = new FormData()
+    formData.append('images', new Blob([imageBytes.buffer as ArrayBuffer], { type: mimeType }), 'plant.jpg')
+    formData.append('organs', 'auto')
+
+    const res = await fetchWithTimeout(
+      `https://my-api.plantnet.org/v2/identify/all?api-key=${apiKey}&lang=en&include-related-images=false&nb-results=3`,
+      { method: 'POST', body: formData },
+      15000
+    )
+
+    if (!res.ok) {
+      logger.warn('plantnet', `HTTP ${res.status} — skipping`)
+      return null
+    }
+
+    const data = await res.json()
+    const top = data?.results?.[0]
+    if (!top || top.score < 0.05) {
+      logger.warn('plantnet', 'No usable result returned')
+      return null
+    }
+
+    const result: PlantNetResult = {
+      scientificName: top.species?.scientificNameWithoutAuthor ?? '',
+      commonName:     top.species?.commonNames?.[0] ?? '',
+      family:         top.species?.family?.scientificNameWithoutAuthor ?? '',
+      score:          Math.round((top.score ?? 0) * 100),
+      topCandidates:  (data.results ?? []).slice(0, 3).map((r: Record<string, unknown>) => ({
+        name:   (r.species as Record<string, unknown>)?.scientificNameWithoutAuthor,
+        common: ((r.species as Record<string, unknown>)?.commonNames as string[])?.[0],
+        score:  Math.round(((r.score as number) ?? 0) * 100),
+      })),
+    }
+
+    logger.info('plantnet', `Top result: ${result.scientificName} (${result.score}%)`, {
+      candidates: result.topCandidates,
+    })
+    return result
+
+  } catch (e) {
+    logger.warn('plantnet', `Failed: ${e instanceof Error ? e.message : String(e)}`)
+    return null
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Weather — best-effort, never blocks the pipeline
+// ---------------------------------------------------------------------------
+async function fetchWeather(
+  lat: number | null, lon: number | null,
+  logger: ReturnType<typeof createLogger>
+): Promise<string> {
+  if (!lat || !lon) return 'Weather data unavailable.'
+  try {
+    const res = await fetchWithTimeout(
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max,precipitation_sum&timezone=auto&past_days=7`,
+      {}, 10000
+    )
+    const wd = await res.json()
+    const pastRain = (wd.daily?.precipitation_sum ?? [])
+      .slice(0, 7).reduce((a: number, b: number | null) => a + (b ?? 0), 0)
+    const futureTemps = (wd.daily?.temperature_2m_max ?? []).slice(7).filter((t: unknown) => t != null)
+    const futureMax = futureTemps.length > 0 ? Math.max(...(futureTemps as number[])) : null
+    const snippet = futureMax != null
+      ? `Past 7-day rain: ${pastRain.toFixed(1)}mm. Forecast peak: ${futureMax}°C.`
+      : `Past 7-day rain: ${pastRain.toFixed(1)}mm.`
+    logger.info('weather', snippet)
+    return snippet
+  } catch (e) {
+    logger.warn('weather', `Failed: ${e instanceof Error ? e.message : String(e)}`)
+    return 'Weather data unavailable.'
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Map health_category (always English) to display color
+// ---------------------------------------------------------------------------
+function healthCategoryToColor(category: string): string {
+  const c = category.toLowerCase().trim()
+  if (c === 'healthy')  return '#4CAF50'
+  if (c === 'critical') return '#FF5252'
+  return '#FF9800' // fair / stressed / recovering
+}
+
+// ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
-serve(async (req) => {
+serve(async (req: Request) => {
   const { record } = await req.json()
   const { image_url, id: record_id, plant_nickname: nickname, user_id } = record
 
@@ -101,12 +259,15 @@ serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   )
 
+  const GEMINI_KEY   = Deno.env.get('GEMINI_API_KEY') ?? ''
+  const PLANTNET_KEY = Deno.env.get('PLANTNET_API_KEY') ?? ''
+
   const logger = createLogger(record_id)
-  logger.info('init', `Pipeline started — image: ${image_url}`)
+  logger.info('init', `Pipeline started — ${image_url}`)
 
   try {
     // -----------------------------------------------------------------------
-    // Preflight: fetch record metadata
+    // Preflight — fetch record metadata
     // -----------------------------------------------------------------------
     logger.startTimer('preflight')
     const { data: log, error: logError } = await supabase
@@ -114,7 +275,6 @@ serve(async (req) => {
       .select('latitude, longitude, location_name, created_at, preferred_language')
       .eq('id', record_id)
       .single()
-
     if (logError) throw new Error(`Preflight DB fetch failed: ${logError.message}`)
     logger.endTimer('preflight')
 
@@ -122,181 +282,144 @@ serve(async (req) => {
     logger.info('preflight', `lang=${userLang}, location=${log.location_name}`)
 
     // -----------------------------------------------------------------------
-    // STAGE 1 — Quality Gatekeeper
+    // Image fetch — ONCE, reused for both Gemini (base64) and PlantNet (bytes)
+    // Doing this before Stage 1 so we have bytes ready for parallel Stage 2
+    // -----------------------------------------------------------------------
+    logger.startTimer('image_fetch')
+    const imgRes = await fetchWithTimeout(image_url, {}, 20000)
+    if (!imgRes.ok) throw new Error(`Image fetch failed: HTTP ${imgRes.status}`)
+    const imageBuffer   = await imgRes.arrayBuffer()
+    const imageBytes    = new Uint8Array(imageBuffer)
+    const imageMimeType = (imgRes.headers.get('content-type') || 'image/jpeg').split(';')[0].trim()
+    const imageBase64   = toBase64(imageBytes)
+    logger.endTimer('image_fetch')
+    logger.info('image_fetch', `Size: ${(imageBytes.length / 1024).toFixed(0)}KB, type: ${imageMimeType}`)
+
+    // -----------------------------------------------------------------------
+    // STAGE 1 — Quality Gatekeeper (Gemini direct API)
     // -----------------------------------------------------------------------
     logger.startTimer('stage1_quality')
-    logger.info('stage1_quality', 'Sending image for quality check')
-
-    const qualityRes = await fetchWithRetry(
-      'https://openrouter.ai/api/v1/chat/completions',
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${Deno.env.get('OPENROUTER_API_KEY')}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-2.0-flash-001',
-          response_format: { type: 'json_object' },
-          messages: [
-            {
-              role: 'system',
-              content: 'You are an image quality validator. Always respond with valid JSON only.',
-            },
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: 'Is this image clear enough to diagnose a plant\'s health? Respond ONLY with JSON: { "is_clear": boolean, "reason": string }',
-                },
-                { type: 'image_url', image_url: { url: image_url } },
-              ],
-            },
-          ],
-        }),
-      },
-      25000, logger, 'stage1_quality'
-    )
-
-    if (!qualityRes.ok) {
-      throw new Error(`Quality check HTTP ${qualityRes.status}: ${await qualityRes.text().then(t => t.slice(0, 200))}`)
-    }
-
-    const qualityData = await qualityRes.json()
-    const rawQuality = qualityData?.choices?.[0]?.message?.content
-    if (!rawQuality) throw new Error(`Quality check empty response: ${JSON.stringify(qualityData).slice(0, 300)}`)
-
-    const quality = parseAIJson(rawQuality) as { is_clear: boolean; reason: string }
+    const quality = await callGemini(
+      GEMINI_KEY,
+      'You are an image quality validator. Respond with valid JSON only.',
+      'Is this image clear enough to identify a plant and assess its health? ' +
+      'Respond ONLY with JSON: { "is_clear": boolean, "reason": string }',
+      imageBase64, imageMimeType, logger, 'stage1_quality',
+      0, // temperature 0 — deterministic yes/no
+      20000
+    ) as { is_clear: boolean; reason: string }
     logger.endTimer('stage1_quality')
     logger.info('stage1_quality', `is_clear=${quality.is_clear}, reason=${quality.reason}`)
 
     if (!quality.is_clear) {
       await supabase.from('plant_logs').update({
-        status: 'done',
-        HealthStatus: 'Quality Issue',
-        HealthColor: '#FF5252',
+        status: 'done', HealthStatus: 'Quality Issue', HealthColor: '#FF5252',
         VisualAnalysis: `Analysis paused: ${quality.reason}. Please try a clearer, closer photo.`,
-        AccuracyScore: 0,
-        processing_log: logger.getLog(),
+        AccuracyScore: 0, processing_log: logger.getLog(),
       }).eq('id', record_id)
       return new Response(JSON.stringify({ success: false, reason: quality.reason }))
     }
 
     // -----------------------------------------------------------------------
-    // STAGE 2 — Context Gathering (History + Weather)
+    // STAGE 2 — Parallel: PlantNet ID + History + Weather
+    // All three run simultaneously — no extra wall-clock time vs sequential
     // -----------------------------------------------------------------------
-    logger.startTimer('stage2_context')
+    logger.startTimer('stage2_parallel')
     const threshold = 0.0001
 
-    const { data: nearbyLogs } = await supabase
-      .from('plant_logs')
-      .select('VisualAnalysis, HealthStatus, PlantName, created_at')
-      .eq('user_id', user_id)
-      .eq('status', 'done')
-      .lt('created_at', log.created_at)
-      .or(
-        `and(latitude.gte.${log.latitude - threshold},latitude.lte.${log.latitude + threshold},longitude.gte.${log.longitude - threshold},longitude.lte.${log.longitude + threshold}),plant_nickname.eq.${nickname ? `'${nickname.replace(/'/g, "''")}'` : 'null'}`
-      )
-      .order('created_at', { ascending: false })
-      .limit(1)
+    const [plantNet, nearbyResult, weatherSnippet] = await Promise.all([
+      // 2a. PlantNet specialized identification
+      identifyWithPlantNet(PLANTNET_KEY, imageBytes, imageMimeType, logger),
 
+      // 2b. Previous scan history for this plant/location
+      supabase
+        .from('plant_logs')
+        .select('VisualAnalysis, HealthStatus, PlantName, created_at')
+        .eq('user_id', user_id)
+        .eq('status', 'done')
+        .lt('created_at', log.created_at)
+        .or(`and(latitude.gte.${log.latitude - threshold},latitude.lte.${log.latitude + threshold},longitude.gte.${log.longitude - threshold},longitude.lte.${log.longitude + threshold}),plant_nickname.eq.${nickname ? `'${nickname.replace(/'/g, "''")}'` : 'null'}`)
+        .order('created_at', { ascending: false })
+        .limit(1),
+
+      // 2c. Weather context
+      fetchWeather(log.latitude, log.longitude, logger),
+    ])
+
+    logger.endTimer('stage2_parallel')
+
+    // Build history context
     let historyContext = 'First-time scan for this plant.'
+    const nearbyLogs = nearbyResult.data
     if (nearbyLogs && nearbyLogs.length > 0) {
       const prev = nearbyLogs[0]
       historyContext = `PREVIOUS SCAN: Plant=${prev.PlantName}, Status=${prev.HealthStatus}, Findings=${(prev.VisualAnalysis ?? '').slice(0, 200)}`
-      logger.info('stage2_context', `Found previous scan: ${prev.HealthStatus} on ${prev.created_at}`)
     }
 
-    let weatherSnippet = 'Weather data unavailable.'
-    if (log.latitude && log.longitude) {
-      try {
-        const weatherRes = await fetchWithTimeout(
-          `https://api.open-meteo.com/v1/forecast?latitude=${log.latitude}&longitude=${log.longitude}&daily=temperature_2m_max,precipitation_sum&timezone=auto&past_days=7`,
-          {},
-          10000
-        )
-        const wd = await weatherRes.json()
-        const pastRain = (wd.daily?.precipitation_sum ?? []).slice(0, 7)
-          .reduce((a: number, b: number | null) => a + (b ?? 0), 0)
-        const futureTemps = (wd.daily?.temperature_2m_max ?? []).slice(7).filter((t: unknown) => t != null)
-        const futureMax = futureTemps.length > 0 ? Math.max(...futureTemps) : null
-        weatherSnippet = futureMax != null
-          ? `Past 7-day rain: ${pastRain.toFixed(1)}mm. Forecast peak: ${futureMax}°C.`
-          : `Past 7-day rain: ${pastRain.toFixed(1)}mm.`
-        logger.info('stage2_context', `Weather: ${weatherSnippet}`)
-      } catch (e) {
-        logger.warn('stage2_context', `Weather fetch failed: ${e instanceof Error ? e.message : String(e)}`)
+    // Build PlantNet identification context for Gemini
+    let identificationContext: string
+    let plantNetConfidence = 0
+    if (plantNet && plantNet.score >= 20) {
+      plantNetConfidence = plantNet.score
+      if (plantNet.score >= 60) {
+        identificationContext =
+          `SPECIALIST IDENTIFICATION (high confidence ${plantNet.score}%): ` +
+          `PlantNet has identified this as "${plantNet.scientificName}" ` +
+          `(common name: "${plantNet.commonName}", family: ${plantNet.family}). ` +
+          `DO NOT re-identify — accept this species. Your job is health analysis and regional context only.`
+      } else {
+        identificationContext =
+          `SPECIALIST SUGGESTION (moderate confidence ${plantNet.score}%): ` +
+          `PlantNet suggests "${plantNet.scientificName}" (${plantNet.commonName}). ` +
+          `Verify visually — if features match, accept it; otherwise use your own judgment. ` +
+          `Other candidates: ${plantNet.topCandidates.slice(1).map(c => `${c.name} (${c.score}%)`).join(', ')}`
       }
+    } else {
+      identificationContext =
+        plantNet
+          ? `PlantNet returned low-confidence results (best: ${plantNet.scientificName} at ${plantNet.score}%). Use your own botanical judgment to identify.`
+          : `PlantNet could not identify this plant. Use your own botanical judgment.`
     }
-    logger.endTimer('stage2_context')
+
+    logger.info('stage2_parallel', identificationContext)
 
     // -----------------------------------------------------------------------
-    // STAGE 3 — Main Analysis
-    // NOTE: system prompt and user message MUST be separate objects in the
-    // messages array. Merging them into one object causes JS duplicate-key
-    // silent override — the entire prompt and image would be lost.
+    // STAGE 3 — Gemini health analysis, guided by PlantNet species
     // -----------------------------------------------------------------------
     logger.startTimer('stage3_analysis')
-    logger.info('stage3_analysis', 'Sending image + context to AI for plant analysis')
 
-    const analysisRes = await fetchWithRetry(
-      'https://openrouter.ai/api/v1/chat/completions',
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${Deno.env.get('OPENROUTER_API_KEY')}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-2.0-flash-001',
-          temperature: 0.1,
-          response_format: { type: 'json_object' },
-          messages: [
-            {
-              role: 'system',
-              content: [
-                'You are a botanist and master horticultural coach with expertise in plant identification and South Asian regional plant names.',
-                'Always respond with valid JSON only. All keys inside vernacular_names must be lowercase.',
-                'Do not wrap the response in markdown code fences.',
-                'ACCURACY OVER CONFIDENCE: It is far better to give a lower confidence score with a correct identification than a high score with a wrong one.',
-              ].join(' '),
-            },
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: `CONTEXT:
+    const result = await callGemini(
+      GEMINI_KEY,
+      [
+        'You are an expert botanist and horticultural coach specialising in South Asian plants.',
+        'Always respond with valid JSON only. All keys in vernacular_names must be lowercase.',
+        'ACCURACY OVER CONFIDENCE: A lower honest score is always better than a high wrong score.',
+      ].join(' '),
+      `CONTEXT:
 Location: ${log.location_name}
 Weather: ${weatherSnippet}
 History: ${historyContext}
 User Hint: "${nickname || 'None provided'}"
+${identificationContext}
 
-STEP 1 — OBSERVE CAREFULLY before identifying. Study these visual features in the image:
-- Leaf shape: Is it round, oval, heart-shaped, elongated, lobed, compound, peltate (stem attached to center)?
-- Leaf texture: Thick/succulent, thin, glossy, matte, fuzzy, waxy?
-- Leaf size and color: Approximate size, shade of green, any variegation or markings?
-- Stem: Thick or thin, woody or herbaceous, trailing or upright?
-- Growth habit: Rosette, trailing, climbing, upright bush, single stem?
-- Any flowers, fruits, or distinctive markers visible?
+YOUR TASK:
+1. IDENTIFICATION: Use the PlantNet result above as ground truth where confidence is high.
+   If re-identification is needed, describe the leaf shape, texture, stem, and growth pattern
+   before naming — then name based only on what you observe.
+2. CONFIDENCE CALIBRATION (be honest — this is shown to users):
+   • 0.90–1.00: Iconic unmistakable plant (Aloe vera, Mango, Banana) OR PlantNet ≥ 80%
+   • 0.70–0.89: Clear features match OR PlantNet 60–80%
+   • 0.50–0.69: Some features match, partially visible, OR PlantNet 20–60%
+   • Below 0.50: Genuinely uncertain — prefix display_name with "Possibly"
+3. HEALTH ASSESSMENT: Analyse leaf colour, turgor, spots, wilting, soil condition.
+4. health_category MUST be one of exactly: "healthy", "fair", or "critical" (English, always).
+5. REGIONAL NAMES: Use traditional names used by locals — not literal translations.
+6. USER LANGUAGE: All user-facing text (health_status, analysis, recovery_steps, pro_tip) in ${userLang}.
+7. weather_alert: Only if weather data indicates genuine risk. Otherwise null.
 
-STEP 2 — IDENTIFY based only on what you actually observe.
-- If a User Hint is provided, use it as strong supporting context but only accept it if the visual features match.
-- Do NOT guess a similar-sounding plant. If unsure, say so in the confidence score.
-- CONFIDENCE CALIBRATION (be honest):
-  * 0.90–1.00: Iconic, unmistakable plant (e.g. Aloe vera, Monstera deliciosa, Banana)
-  * 0.70–0.89: Clear distinguishing features visible, highly confident
-  * 0.50–0.69: Some features match but image is partial or ambiguous
-  * Below 0.50: Genuinely uncertain — use display_name like "Possibly [name]"
-
-STEP 3 — ASSESS HEALTH based on visible leaf condition, soil, stems.
-
-STEP 4 — REGIONAL NAMES. For vernacular_names use traditional names used by local people in ${userLang}, Hindi, Tamil, Telugu — NOT literal translations.
-
-RESPOND WITH THIS EXACT JSON:
+RESPOND WITH THIS EXACT JSON (no markdown fences):
 {
-  "visual_features": "One sentence describing exactly what leaf shape, texture, stem, and growth pattern you observe",
+  "visual_features": "One sentence: exact leaf shape, texture, stem, growth pattern observed",
   "display_name": "Most culturally relatable name in ${userLang}",
   "scientific_name": "Genus species",
   "vernacular_names": {
@@ -306,71 +429,58 @@ RESPOND WITH THIS EXACT JSON:
     "telugu": "Traditional Telugu name or None"
   },
   "confidence_score": 0.75,
+  "health_category": "healthy",
   "health_status": "Health status in ${userLang}",
-  "analysis": "Detailed visual analysis of plant condition in ${userLang}",
-  "recovery_steps": ["Step 1 in ${userLang}", "Step 2 in ${userLang}", "Step 3 in ${userLang}"],
-  "pro_tip": "Regional gardening insight for ${log.location_name} in ${userLang}",
-  "weather_alert": "Climate protection advice based on weather data, or null"
+  "analysis": "Detailed health analysis in ${userLang}",
+  "recovery_steps": ["Step 1 in ${userLang}", "Step 2", "Step 3"],
+  "pro_tip": "Regional gardening tip for ${log.location_name} in ${userLang}",
+  "weather_alert": null
 }`,
-                },
-                { type: 'image_url', image_url: { url: image_url } },
-              ],
-            },
-          ],
-        }),
-      },
-      45000, logger, 'stage3_analysis'
+      imageBase64, imageMimeType, logger, 'stage3_analysis',
+      0.1, 45000
     )
 
-    if (!analysisRes.ok) {
-      const body = await analysisRes.text()
-      throw new Error(`Analysis API HTTP ${analysisRes.status}: ${body.slice(0, 300)}`)
-    }
-
-    const aiResponse = await analysisRes.json()
-    const rawResult = aiResponse?.choices?.[0]?.message?.content
-    if (!rawResult) throw new Error(`Analysis returned empty content: ${JSON.stringify(aiResponse).slice(0, 300)}`)
-
-    const result = parseAIJson(rawResult)
     logger.endTimer('stage3_analysis')
-    logger.info('stage3_analysis', `health=${result.health_status}, confidence=${result.confidence_score}`)
+    logger.info('stage3_analysis', `plant=${result.display_name}, health=${result.health_category}, confidence=${result.confidence_score}`, {
+      plantnet_score: plantNetConfidence,
+      plantnet_name: plantNet?.scientificName,
+    })
 
     // -----------------------------------------------------------------------
-    // STAGE 4 — Database Update
+    // STAGE 4 — Database update
     // -----------------------------------------------------------------------
     logger.startTimer('stage4_db')
 
-    const rawScore = parseFloat(String(result.confidence_score ?? 0))
+    const rawScore  = parseFloat(String(result.confidence_score ?? 0))
     const finalScore = Math.round(rawScore <= 1 ? rawScore * 100 : rawScore)
-    const healthStatus = String(result.health_status ?? '')
-    const healthColor = healthStatus.toLowerCase().includes('healthy') ? '#4CAF50' : '#FF9800'
+    const healthColor = healthCategoryToColor(String(result.health_category ?? 'fair'))
 
     const { error: updateError } = await supabase
       .from('plant_logs')
       .update({
-        PlantName: result.display_name,
-        ScientificName: result.scientific_name,
-        AccuracyScore: finalScore,
-        HealthStatus: healthStatus,
-        HealthColor: healthColor,
-        VisualAnalysis: result.visual_features
-          ? `[Observed: ${result.visual_features}]\n\n${result.analysis}`
-          : result.analysis,
+        PlantName:          result.display_name,
+        ScientificName:     result.scientific_name,
+        AccuracyScore:      finalScore,
+        HealthStatus:       result.health_status,
+        HealthColor:        healthColor,
+        VisualAnalysis:     result.visual_features
+                              ? `[Observed: ${result.visual_features}]\n\n${result.analysis}`
+                              : result.analysis,
         vernacular_metadata: result.vernacular_names ?? {},
-        CarePlan: Array.isArray(result.recovery_steps)
-          ? result.recovery_steps.map((s: unknown) => `• ${String(s)}`).join('\n')
-          : String(result.recovery_steps ?? ''),
-        ExpertTip: result.pro_tip,
-        WeatherAlert: result.weather_alert ?? null,
-        status: 'done',
-        error_details: null,
-        processing_log: logger.getLog(),
+        CarePlan:           Array.isArray(result.recovery_steps)
+                              ? result.recovery_steps.map((s: unknown) => `• ${String(s)}`).join('\n')
+                              : String(result.recovery_steps ?? ''),
+        ExpertTip:          result.pro_tip,
+        WeatherAlert:       result.weather_alert ?? null,
+        status:             'done',
+        error_details:      null,
+        processing_log:     logger.getLog(),
       })
       .eq('id', record_id)
 
     if (updateError) throw new Error(`DB update failed: ${updateError.message}`)
     logger.endTimer('stage4_db')
-    logger.info('stage4_db', 'Pipeline complete — record marked done')
+    logger.info('stage4_db', 'Pipeline complete')
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json' },
@@ -378,17 +488,14 @@ RESPOND WITH THIS EXACT JSON:
 
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error)
-    logger.error('pipeline', 'Fatal error — marking record as error', error)
-
+    logger.error('pipeline', 'Fatal error', error)
     await supabase.from('plant_logs').update({
       status: 'error',
       error_details: errMsg,
       processing_log: logger.getLog(),
     }).eq('id', record_id)
-
     return new Response(JSON.stringify({ error: errMsg }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
+      status: 500, headers: { 'Content-Type': 'application/json' },
     })
   }
 })
