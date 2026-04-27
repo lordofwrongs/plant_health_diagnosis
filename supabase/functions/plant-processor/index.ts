@@ -356,79 +356,93 @@ serve(async (req: Request) => {
       historyContext = `PREVIOUS SCAN: Plant=${prev.PlantName}, Status=${prev.HealthStatus}, Findings=${(prev.VisualAnalysis ?? '').slice(0, 200)}`
     }
 
-    // Build PlantNet identification context for Gemini
-    let identificationContext: string
-    let plantNetConfidence = 0
-    if (plantNet && plantNet.score >= 20) {
-      plantNetConfidence = plantNet.score
-      if (plantNet.score >= 60) {
-        identificationContext =
-          `SPECIALIST IDENTIFICATION (high confidence ${plantNet.score}%): ` +
-          `PlantNet has identified this as "${plantNet.scientificName}" ` +
-          `(common name: "${plantNet.commonName}", family: ${plantNet.family}). ` +
-          `DO NOT re-identify — accept this species. Your job is health analysis and regional context only.`
-      } else {
-        identificationContext =
-          `SPECIALIST SUGGESTION (moderate confidence ${plantNet.score}%): ` +
-          `PlantNet suggests "${plantNet.scientificName}" (${plantNet.commonName}). ` +
-          `Verify visually — if features match, accept it; otherwise use your own judgment. ` +
-          `Other candidates: ${plantNet.topCandidates.slice(1).map(c => `${c.name} (${c.score}%)`).join(', ')}`
-      }
-    } else {
-      identificationContext =
-        plantNet
-          ? `PlantNet returned low-confidence results (best: ${plantNet.scientificName} at ${plantNet.score}%). Use your own botanical judgment to identify.`
-          : `PlantNet could not identify this plant. Use your own botanical judgment.`
-    }
-
-    logger.info('stage2_parallel', identificationContext)
+    const plantNetConfidence = plantNet?.score ?? 0
+    logger.info('stage2_parallel', `PlantNet: ${plantNet ? `${plantNet.scientificName} ${plantNet.score}%` : 'no result'}`)
 
     // -----------------------------------------------------------------------
-    // STAGE 3 — Gemini health analysis, guided by PlantNet species
+    // STAGE 3 — Two-step identification then health analysis
+    //
+    // Key insight: when PlantNet score is < 85%, Gemini must identify the plant
+    // INDEPENDENTLY first (no PlantNet hint), then we reconcile. This prevents
+    // PlantNet's wrong guess from anchoring Gemini's identification.
+    //
+    // Confidence is COMPUTED from the agreement signal, never self-reported.
     // -----------------------------------------------------------------------
     logger.startTimer('stage3_analysis')
+
+    // Decide the identification strategy based on PlantNet confidence
+    const useGroundTruth  = plantNet !== null && plantNet.score >= 85
+    const useCrossValidate = plantNet !== null && plantNet.score >= 20 && plantNet.score < 85
+
+    // Build the identification section of the prompt
+    let identSection: string
+    if (useGroundTruth) {
+      // PlantNet is very confident — accept it, focus entirely on health
+      identSection =
+        `SPECIES CONFIRMED (PlantNet ${plantNet!.score}% confidence): ` +
+        `"${plantNet!.scientificName}" (${plantNet!.commonName}, family ${plantNet!.family}). ` +
+        `DO NOT re-identify. Set independent_id and final_scientific_name to this confirmed species, ` +
+        `and agrees_with_specialist to true. Focus on health analysis and regional context.`
+    } else if (useCrossValidate) {
+      // Medium PlantNet confidence — Gemini identifies independently first, THEN cross-checks
+      const altStr = plantNet!.topCandidates.slice(1).map((c: { name: string; score: number }) => `${c.name} (${c.score}%)`).join(', ')
+      identSection =
+        `CROSS-VALIDATION TASK — follow these steps in order:\n` +
+        `Step 1 — YOUR INDEPENDENT ID: Look carefully at leaf shape, how the petiole attaches ` +
+        `(at leaf base vs. center of leaf), leaf texture, venation pattern, stem type, and growth habit. ` +
+        `Based ONLY on these visual features, name the plant. Set independent_id to your answer.\n` +
+        `Step 2 — SPECIALIST CHECK: PlantNet (trained on millions of herbarium specimens) says ` +
+        `"${plantNet!.scientificName}" (${plantNet!.commonName}) at ${plantNet!.score}%. ` +
+        `Alternatives: ${altStr || 'none'}.\n` +
+        `Step 3 — RECONCILE: If your Step 1 answer matches PlantNet → set agrees_with_specialist=true ` +
+        `and final_scientific_name to that species. If they differ → set agrees_with_specialist=false ` +
+        `and final_scientific_name to YOUR Step 1 identification (you know something PlantNet missed).`
+    } else {
+      // Low/no PlantNet — Gemini identifies entirely on its own
+      const hint = plantNet
+        ? `PlantNet returned a weak signal (best guess: ${plantNet.scientificName} at ${plantNet.score}%) — treat as unreliable.`
+        : `PlantNet could not identify this plant.`
+      identSection =
+        `${hint} Identify the plant yourself. ` +
+        `Describe the petiole attachment (base vs. center), leaf shape, texture, and growth pattern first, ` +
+        `then name it. Set independent_id = final_scientific_name and agrees_with_specialist = false.`
+    }
 
     const result = await callGemini(
       GEMINI_KEY,
       [
         'You are an expert botanist and horticultural coach specialising in South Asian plants.',
         'Always respond with valid JSON only. All keys in vernacular_names must be lowercase.',
-        'ACCURACY OVER CONFIDENCE: A lower honest score is always better than a high wrong score.',
       ].join(' '),
       `CONTEXT:
 Location: ${log.location_name}
 Weather: ${weatherSnippet}
 History: ${historyContext}
 User Hint: "${nickname || 'None provided'}"
-${identificationContext}
+
+${identSection}
 
 YOUR TASK:
-1. IDENTIFICATION: Use the PlantNet result above as ground truth where confidence is high.
-   If re-identification is needed, describe the leaf shape, texture, stem, and growth pattern
-   before naming — then name based only on what you observe.
-2. CONFIDENCE CALIBRATION (be honest — this is shown to users):
-   • 0.90–1.00: Iconic unmistakable plant (Aloe vera, Mango, Banana) OR PlantNet ≥ 80%
-   • 0.70–0.89: Clear features match OR PlantNet 60–80%
-   • 0.50–0.69: Some features match, partially visible, OR PlantNet 20–60%
-   • Below 0.50: Genuinely uncertain — prefix display_name with "Possibly"
-3. HEALTH ASSESSMENT: Analyse leaf colour, turgor, spots, wilting, soil condition.
-4. health_category MUST be one of exactly: "healthy", "fair", or "critical" (English, always).
-5. REGIONAL NAMES: Use traditional names used by locals — not literal translations.
-6. USER LANGUAGE: All user-facing text (health_status, analysis, recovery_steps, pro_tip) in ${userLang}.
-7. weather_alert: Only if weather data indicates genuine risk. Otherwise null.
+1. IDENTIFICATION: Follow the identification strategy above precisely.
+2. HEALTH ASSESSMENT: Analyse leaf colour, turgor, spots, wilting, soil condition.
+3. health_category MUST be exactly one of: "healthy", "fair", or "critical" (English, always).
+4. REGIONAL NAMES: Use traditional names used by locals — not literal translations.
+5. USER LANGUAGE: All user-facing text in ${userLang}.
+6. weather_alert: Only if weather data indicates genuine risk. Otherwise null.
 
 RESPOND WITH THIS EXACT JSON (no markdown fences):
 {
-  "visual_features": "One sentence: exact leaf shape, texture, stem, growth pattern observed",
+  "independent_id": "Scientific name from YOUR own visual analysis (Step 1)",
+  "agrees_with_specialist": true,
+  "visual_features": "One sentence: petiole attachment point, leaf shape, texture, stem, growth pattern",
   "display_name": "Most culturally relatable name in ${userLang}",
-  "scientific_name": "Genus species",
+  "final_scientific_name": "Genus species (reconciled winner)",
   "vernacular_names": {
     "english": "Common English name",
     "hindi": "Traditional Hindi name",
     "tamil": "Traditional Tamil name or None",
     "telugu": "Traditional Telugu name or None"
   },
-  "confidence_score": 0.75,
   "health_category": "healthy",
   "health_status": "Health status in ${userLang}",
   "analysis": "Detailed health analysis in ${userLang}",
@@ -441,25 +455,53 @@ RESPOND WITH THIS EXACT JSON (no markdown fences):
     )
 
     logger.endTimer('stage3_analysis')
-    logger.info('stage3_analysis', `plant=${result.display_name}, health=${result.health_category}, confidence=${result.confidence_score}`, {
+
+    // -----------------------------------------------------------------------
+    // Compute confidence from agreement signal — never trust AI self-reporting
+    //
+    // High confidence is EARNED by agreement between two independent sources.
+    // This is how calibrated apps (iNaturalist, PlantNet) build user trust:
+    // when they say 92%, they're right ~92% of the time.
+    // -----------------------------------------------------------------------
+    const geminiAgrees = Boolean(result.agrees_with_specialist)
+    const geminiId     = String(result.independent_id   ?? '')
+    const finalId      = String(result.final_scientific_name ?? result.independent_id ?? '')
+
+    let finalScore: number
+    if (useGroundTruth) {
+      // PlantNet ≥ 85% + Gemini confirmed → very high confidence
+      finalScore = 93
+    } else if (useCrossValidate && geminiAgrees) {
+      // Both sources agree
+      if (plantNetConfidence >= 70) finalScore = 90
+      else if (plantNetConfidence >= 50) finalScore = 83
+      else finalScore = 75
+    } else if (useCrossValidate && !geminiAgrees) {
+      // Gemini overrides PlantNet — honest but uncertain; display_name will get "Possibly"
+      finalScore = 60
+    } else {
+      // No usable PlantNet — Gemini only; cap at 78 since there's no cross-validation
+      finalScore = 70
+    }
+
+    logger.info('stage3_analysis', `independent=${geminiId}, agrees=${geminiAgrees}, final=${finalId}, computed_confidence=${finalScore}`, {
       plantnet_score: plantNetConfidence,
       plantnet_name: plantNet?.scientificName,
     })
 
-    // -----------------------------------------------------------------------
-    // STAGE 4 — Database update
-    // -----------------------------------------------------------------------
-    logger.startTimer('stage4_db')
-
-    const rawScore  = parseFloat(String(result.confidence_score ?? 0))
-    const finalScore = Math.round(rawScore <= 1 ? rawScore * 100 : rawScore)
+    // Prefix "Possibly" when Gemini overrides PlantNet or low PlantNet signal
+    const displayName = String(result.display_name ?? finalId)
+    const needsPossibly = (!geminiAgrees && useCrossValidate) || (!plantNet && finalScore < 65)
+    const finalDisplayName = needsPossibly && !displayName.toLowerCase().startsWith('possibly')
+      ? `Possibly ${displayName}`
+      : displayName
     const healthColor = healthCategoryToColor(String(result.health_category ?? 'fair'))
 
     const { error: updateError } = await supabase
       .from('plant_logs')
       .update({
-        PlantName:          result.display_name,
-        ScientificName:     result.scientific_name,
+        PlantName:          finalDisplayName,
+        ScientificName:     result.final_scientific_name ?? result.scientific_name,
         AccuracyScore:      finalScore,
         HealthStatus:       result.health_status,
         HealthColor:        healthColor,

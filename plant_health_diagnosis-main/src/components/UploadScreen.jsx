@@ -177,6 +177,10 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
         <p style={styles.cardSubtitle}>
           Upload multiple photos for a better diagnosis. We'll use local weather and <strong>{userLanguage}</strong> for the report.
         </p>
+        <div style={styles.photoTip}>
+          <span style={styles.photoTipIcon}>📸</span>
+          <span>Best results: shoot from the side at leaf level · include a leaf closeup · avoid top-down angles</span>
+        </div>
 
         <div style={styles.inputWrapper}>
           <label style={styles.label}>Identify this plant (optional)</label>
@@ -267,6 +271,8 @@ const styles = {
   card: { background: '#fff', borderRadius: '24px', padding: '32px 28px', width: '100%', maxWidth: '440px', boxShadow: '0 12px 48px rgba(26,58,42,0.08)' },
   cardTitle: { fontFamily: "'Playfair Display', serif", fontSize: '24px', color: '#1a3a2a', marginBottom: '8px' },
   cardSubtitle: { fontSize: '13px', color: '#4a6358', marginBottom: '24px', lineHeight: '1.5' },
+  photoTip: { display: 'flex', alignItems: 'flex-start', gap: '8px', background: '#f0faf4', border: '1px solid #b7e4c7', borderRadius: '10px', padding: '10px 12px', marginBottom: '20px', fontSize: '12px', color: '#2d6a4f', lineHeight: '1.5' },
+  photoTipIcon: { fontSize: '16px', flexShrink: 0 },
   inputWrapper: { marginBottom: '20px', textAlign: 'left' },
   label: { fontSize: '12px', fontWeight: '600', color: '#2d6a4f', marginBottom: '6px', display: 'block' },
   input: { width: '100%', padding: '12px', borderRadius: '12px', border: '1px solid #e0e6e3', fontSize: '14px', outline: 'none', background: '#fcfdfc' },
