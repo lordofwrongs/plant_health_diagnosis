@@ -8,9 +8,10 @@ You are the production support agent for **BotanIQ** — an AI-powered plant ide
 |---|---|---|
 | Frontend (React+Vite) | `src/` | Deployed on Vercel, auto-deploys on push to `main` |
 | Edge function (AI pipeline) | `supabase/functions/plant-processor/index.ts` | Deno runtime, deployed to Supabase |
-| Database | Supabase Postgres | Table: `plant_logs` |
+| Database | Supabase Postgres | Tables: `plant_logs`, `users` |
 | Storage | Supabase Storage | Bucket: `plant_images` |
 | Realtime | Supabase Realtime | Channel: `log-monitor-{id}` and `history_realtime_sync` |
+| Registration | `src/components/RegisterModal.jsx` | Soft modal shown after first scan; stores to `users` table; state in `localStorage.botaniq_registered` |
 
 ## Credentials (read from `credentials.env.txt`)
 
@@ -27,6 +28,13 @@ You are the production support agent for **BotanIQ** — an AI-powered plant ide
 $headers = @{ "apikey" = "<SERVICE_ROLE_KEY>"; "Authorization" = "Bearer <SERVICE_ROLE_KEY>" }
 $r = Invoke-RestMethod -Uri "https://thgdxffelonamukytosq.supabase.co/rest/v1/plant_logs?select=id,status,PlantName,AccuracyScore,created_at,error_details&order=created_at.desc&limit=20" -Headers $headers
 $r | Format-Table status, PlantName, AccuracyScore, created_at, error_details -AutoSize
+```
+
+### Check registered users
+```powershell
+$headers = @{ "apikey" = "<SERVICE_ROLE_KEY>"; "Authorization" = "Bearer <SERVICE_ROLE_KEY>" }
+$r = Invoke-RestMethod -Uri "https://thgdxffelonamukytosq.supabase.co/rest/v1/users?select=id,first_name,last_name,email,phone,created_at&order=created_at.desc" -Headers $headers
+$r | Format-Table first_name, last_name, email, phone, created_at -AutoSize
 ```
 
 ### Check for errors in last 24h
@@ -113,6 +121,23 @@ npx vercel --prod --yes
 - Check CORS policy on storage bucket
 - Check network tab for 4xx on the upload request
 
+### 11. "Registration modal keeps appearing after user already registered"
+- `localStorage.botaniq_registered` should be `"true"` or `"skipped"` after first registration/skip
+- Clear site data may have wiped localStorage — user sees the modal again; this is expected behaviour
+- No fix needed; modal is safe to fill in again (duplicate `guest_id` insert is handled gracefully)
+
+### 12. "Registration save fails — user sees 'Something went wrong'"
+- Check Supabase `users` table exists (migration `20260427_create_users_table.sql` must have been run)
+- Check RLS policies: `anon_insert` policy must exist on `users` table
+- Verify via Supabase dashboard → Table Editor → users → RLS policies
+- If table is missing: run the migration SQL in the Supabase SQL editor
+- If policy is missing: `create policy "anon_insert" on users for insert to anon with check (true);`
+
+### 13. "User registered but I can't see them in the database"
+- The `anon` role has no SELECT policy on `users` by design (privacy) — use the **service role key** to query
+- In Supabase dashboard: Table Editor → users (visible to admins), or use the diagnostic command above
+- Do NOT add an anon SELECT policy — it would expose all user data publicly
+
 ## Key Files for Fixes
 
 | Issue type | File to edit |
@@ -120,10 +145,12 @@ npx vercel --prod --yes
 | AI prompt / pipeline logic | `supabase/functions/plant-processor/index.ts` |
 | Upload / compression / HEIC | `src/components/UploadScreen.jsx` |
 | Analysis progress / quality gate UI | `src/components/AnalysingScreen.jsx` |
-| Results display / feedback | `src/components/ResultsScreen.jsx` |
+| Results display / scan history timeline | `src/components/ResultsScreen.jsx` |
 | History / retry UI | `src/components/HistoryScreen.jsx` |
-| Navigation / language | `src/App.jsx` |
+| Registration modal | `src/components/RegisterModal.jsx` |
+| Modal trigger logic / routing | `src/App.jsx` |
 | Design tokens / animations | `src/index.css` |
+| DB schema | `supabase/migrations/` |
 
 ## Deploy Checklist (after any fix)
 
