@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClient.js';
 
-export default function ResultsScreen({ result, userLanguage, onReset, onBack, allScans = [] }) {
+export default function ResultsScreen({ result, userLanguage, onReset, onBack, allScans = [], onSelectScan }) {
   const [feedbackStatus, setFeedbackStatus] = useState(null);
 
   const getDynamicName = () => {
@@ -154,6 +154,38 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
             ))}
           </div>
         </div>
+
+        {/* Scan history timeline */}
+        {allScans.length > 1 && (
+          <div className="fade-up-delay-2 verdant-card" style={styles.section}>
+            <h3 style={styles.sectionTitle}>Scan History ({allScans.length})</h3>
+            <div style={styles.timelineList}>
+              {allScans.map((scan, i) => {
+                const isCurrent = scan.id === result?.id;
+                return (
+                  <button
+                    key={scan.id}
+                    style={{ ...styles.timelineRow, ...(isCurrent ? styles.timelineRowActive : {}) }}
+                    onClick={() => !isCurrent && onSelectScan?.(scan)}
+                    disabled={isCurrent}
+                  >
+                    <span style={{ ...styles.timelineDot, background: scan.HealthColor || 'var(--leaf)' }} />
+                    <span style={styles.timelineDate}>
+                      {new Date(scan.created_at).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </span>
+                    <span style={{ ...styles.timelineStatus, color: scan.HealthColor || 'var(--mid)' }}>
+                      {scan.HealthStatus || '—'}
+                    </span>
+                    {isCurrent
+                      ? <span style={styles.timelineCurrent}>Viewing</span>
+                      : <span style={styles.timelineChevron}>›</span>
+                    }
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Expert tip */}
         {result?.ExpertTip && (
@@ -363,6 +395,62 @@ const styles = {
     fontSize: '15px',
     color: 'var(--text-2)',
     lineHeight: '1.65',
+  },
+
+  timelineList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  timelineRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '10px 12px',
+    borderRadius: 'var(--r-sm)',
+    border: '1px solid var(--border)',
+    background: 'var(--mist)',
+    cursor: 'pointer',
+    width: '100%',
+    textAlign: 'left',
+    transition: 'background 0.15s',
+  },
+  timelineRowActive: {
+    background: 'var(--sage)',
+    border: '1px solid var(--leaf)',
+    cursor: 'default',
+  },
+  timelineDot: {
+    width: '10px',
+    height: '10px',
+    borderRadius: '50%',
+    flexShrink: 0,
+  },
+  timelineDate: {
+    fontSize: '13px',
+    fontWeight: '600',
+    color: 'var(--text-2)',
+    minWidth: '110px',
+  },
+  timelineStatus: {
+    fontSize: '13px',
+    fontWeight: '500',
+    flex: 1,
+  },
+  timelineCurrent: {
+    fontSize: '10px',
+    fontWeight: '700',
+    color: 'var(--mid)',
+    background: 'var(--card)',
+    border: '1px solid var(--leaf)',
+    borderRadius: 'var(--r-full)',
+    padding: '2px 8px',
+    letterSpacing: '0.3px',
+  },
+  timelineChevron: {
+    fontSize: '18px',
+    color: 'var(--text-4)',
+    fontWeight: '300',
   },
 
   journeyGrid: {

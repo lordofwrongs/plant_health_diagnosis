@@ -143,6 +143,7 @@ export default function App() {
             onReset={handleReset}
             onBack={() => setScreen('history')}
             allScans={historyContext}
+            onSelectScan={(scan) => setResult(scan)}
           />
         )}
 
