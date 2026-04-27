@@ -296,28 +296,51 @@ serve(async (req: Request) => {
     logger.info('image_fetch', `Size: ${(imageBytes.length / 1024).toFixed(0)}KB, type: ${imageMimeType}`)
 
     // -----------------------------------------------------------------------
-    // STAGE 1 — Quality Gatekeeper (Gemini direct API)
+    // STAGE 1 — Smart Quality Gate (Gemini)
+    //
+    // Philosophy: HARD REJECT only when truly unanalyzable (no plant visible,
+    // pitch black, extreme blur with zero features). For imperfect but usable
+    // photos (top-down, far away, low light) — proceed AND store a photo_tip.
+    // This keeps the app helpful while guiding users toward better photos.
     // -----------------------------------------------------------------------
     logger.startTimer('stage1_quality')
     const quality = await callGemini(
       GEMINI_KEY,
-      'You are an image quality validator. Respond with valid JSON only.',
-      'Is this image clear enough to identify a plant and assess its health? ' +
-      'Respond ONLY with JSON: { "is_clear": boolean, "reason": string }',
-      imageBase64, imageMimeType, logger, 'stage1_quality',
-      0, // temperature 0 — deterministic yes/no
-      20000
-    ) as { is_clear: boolean; reason: string }
-    logger.endTimer('stage1_quality')
-    logger.info('stage1_quality', `is_clear=${quality.is_clear}, reason=${quality.reason}`)
+      'You are a quality gate for a plant health analysis app. Respond with valid JSON only.',
+      `Evaluate whether this image can produce a reliable plant identification.
 
-    if (!quality.is_clear) {
+HARD REJECT (is_analyzable = false) ONLY when:
+- No plant is visible at all (photo of floor, ceiling, random objects, just a hand)
+- Image is completely black, completely white, or so blurry that ZERO features are discernible
+
+PROCEED (is_analyzable = true) for everything else, including:
+- Top-down angle, plant at a distance, partial view, slightly blurry, low light, just leaves/stems
+
+When proceeding, set photo_tip to a short actionable suggestion IF a different angle or distance
+would meaningfully improve accuracy. Otherwise set photo_tip to null.
+
+Common tips (use the most relevant one, or null if photo is already good):
+- Top-down shot: "Shoot from the side at leaf level to show how the stem meets the leaf"
+- Plant too far: "Move closer so individual leaves fill most of the frame"
+- Dark lighting: "Take the photo in natural daylight for accurate leaf color analysis"
+- Only pot/soil visible: "Focus on the leaves and stem rather than the whole pot"
+
+Respond ONLY with JSON: { "is_analyzable": boolean, "photo_tip": string | null }`,
+      imageBase64, imageMimeType, logger, 'stage1_quality',
+      0,     // temperature 0 — deterministic gate decision
+      20000
+    ) as { is_analyzable: boolean; photo_tip: string | null }
+    logger.endTimer('stage1_quality')
+    logger.info('stage1_quality', `is_analyzable=${quality.is_analyzable}, tip=${quality.photo_tip}`)
+
+    if (!quality.is_analyzable) {
+      const tip = quality.photo_tip ?? 'Please take a clear photo of the plant with good lighting.'
       await supabase.from('plant_logs').update({
-        status: 'done', HealthStatus: 'Quality Issue', HealthColor: '#FF5252',
-        VisualAnalysis: `Analysis paused: ${quality.reason}. Please try a clearer, closer photo.`,
-        AccuracyScore: 0, processing_log: logger.getLog(),
+        status: 'quality_issue',
+        error_details: tip,
+        processing_log: logger.getLog(),
       }).eq('id', record_id)
-      return new Response(JSON.stringify({ success: false, reason: quality.reason }))
+      return new Response(JSON.stringify({ success: false, quality_issue: true, tip }))
     }
 
     // -----------------------------------------------------------------------
@@ -515,7 +538,8 @@ RESPOND WITH THIS EXACT JSON (no markdown fences):
         ExpertTip:          result.pro_tip,
         WeatherAlert:       result.weather_alert ?? null,
         status:             'done',
-        error_details:      null,
+        // Store photo_tip in error_details so ResultsScreen can surface it as gentle guidance
+        error_details:      quality.photo_tip ?? null,
         processing_log:     logger.getLog(),
       })
       .eq('id', record_id)

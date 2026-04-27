@@ -8,6 +8,7 @@ const HARD_TIMEOUT_MS  = 90000  // Give up after 90s and show error
 export default function AnalysingScreen({ logId, onResultReady, onError }) {
   const [currentStep, setCurrentStep] = useState(0)
   const [errorState, setErrorState] = useState(null)
+  const [qualityIssue, setQualityIssue] = useState(null) // photo tip from quality gate
   const resolvedRef = useRef(false)
 
   useEffect(() => {
@@ -29,6 +30,13 @@ export default function AnalysingScreen({ logId, onResultReady, onError }) {
       setErrorState(msg)
     }
 
+    const needsBetterPhoto = (tip) => {
+      if (resolvedRef.current) return
+      resolvedRef.current = true
+      logger.info('AnalysingScreen', `Quality gate rejected image: ${tip}`, { record_id: logId })
+      setQualityIssue(tip)
+    }
+
     // ------------------------------------------------------------------
     // 1. Realtime subscription (primary path)
     // ------------------------------------------------------------------
@@ -39,8 +47,9 @@ export default function AnalysingScreen({ logId, onResultReady, onError }) {
         { event: 'UPDATE', schema: 'public', table: 'plant_logs', filter: `id=eq.${logId}` },
         (payload) => {
           logger.info('AnalysingScreen', `Realtime event: status=${payload.new.status}`, { record_id: logId })
-          if (payload.new.status === 'done')  resolve(payload.new)
-          if (payload.new.status === 'error') fail(payload.new.error_details || 'Analysis failed. Please try again.')
+          if (payload.new.status === 'done')          resolve(payload.new)
+          if (payload.new.status === 'error')         fail(payload.new.error_details || 'Analysis failed. Please try again.')
+          if (payload.new.status === 'quality_issue') needsBetterPhoto(payload.new.error_details || 'Please take a clearer photo of the plant.')
         }
       )
       .subscribe((status) => {
@@ -61,8 +70,9 @@ export default function AnalysingScreen({ logId, onResultReady, onError }) {
           .single()
         if (error) { logger.warn('AnalysingScreen', `Poll error: ${error.message}`, { record_id: logId }); return }
         logger.info('AnalysingScreen', `Poll result: status=${data?.status}`, { record_id: logId })
-        if (data?.status === 'done')  resolve(data)
-        if (data?.status === 'error') fail(data?.error_details || 'Analysis failed. Please try again.')
+        if (data?.status === 'done')          resolve(data)
+        if (data?.status === 'error')         fail(data?.error_details || 'Analysis failed. Please try again.')
+        if (data?.status === 'quality_issue') needsBetterPhoto(data?.error_details || 'Please take a clearer photo of the plant.')
       } catch (e) {
         logger.warn('AnalysingScreen', `Poll exception: ${e?.message}`, { record_id: logId })
       }
@@ -89,6 +99,26 @@ export default function AnalysingScreen({ logId, onResultReady, onError }) {
       clearTimeout(timeoutTimer)
     }
   }, [logId, onResultReady])
+
+  // ------------------------------------------------------------------
+  // Quality issue UI — friendly, not scary; guides user to retake
+  // ------------------------------------------------------------------
+  if (qualityIssue) {
+    return (
+      <div style={styles.page}>
+        <div style={{ ...styles.container, gap: '16px' }}>
+          <div style={styles.cameraIconWrap}>📸</div>
+          <h2 style={styles.title}>Better Photo Needed</h2>
+          <p style={styles.subtitle}>We couldn't reliably analyse this image. A clearer photo will give you a much more accurate result.</p>
+          <div style={styles.tipBox}>
+            <span style={styles.tipLabel}>Tip</span>
+            <span style={styles.tipText}>{qualityIssue}</span>
+          </div>
+          <button style={styles.retryBtn} onClick={onError}>Retake Photo</button>
+        </div>
+      </div>
+    )
+  }
 
   // ------------------------------------------------------------------
   // Error state UI
@@ -281,6 +311,12 @@ const styles = {
   stepLabelDone:  { color: '#2d6a4f', fontWeight: '500' },
   stepLabelActive:{ color: '#52b788', fontWeight: '500' },
   note: { fontSize: '12px', color: '#8aaa96' },
+
+  // Quality issue state
+  cameraIconWrap: { fontSize: '56px', marginBottom: '4px' },
+  tipBox: { background: '#fff8e1', border: '1px solid #ffe082', borderRadius: '12px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '6px', textAlign: 'left', width: '100%' },
+  tipLabel: { fontSize: '10px', fontWeight: '800', color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.5px' },
+  tipText: { fontSize: '14px', color: '#78350f', lineHeight: '1.5' },
 
   // Error state
   errorIconWrap: { fontSize: '48px', marginBottom: '8px' },

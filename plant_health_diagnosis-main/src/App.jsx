@@ -133,11 +133,14 @@ export default function App() {
         )}
         
         {screen === 'history' && (
-          <HistoryScreen onSelectResult={(data, fullHistory) => {
-            setResult(data)
-            setHistoryContext(fullHistory)
-            setScreen('results')
-          }} />
+          <HistoryScreen
+            onSelectResult={(data, fullHistory) => {
+              setResult(data)
+              setHistoryContext(fullHistory)
+              setScreen('results')
+            }}
+            onRetakePhoto={handleReset}
+          />
         )}
       </main>
     </div>

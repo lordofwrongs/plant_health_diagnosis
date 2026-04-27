@@ -160,6 +160,13 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
           </div>
         )}
 
+        {result?.error_details && (
+          <div style={styles.photoTipBox}>
+            <span style={styles.photoTipLabel}>📸 PHOTO TIP</span>
+            <p style={styles.tipText}>Next time: {result.error_details}</p>
+          </div>
+        )}
+
         <div style={styles.feedbackContainer}>
           {feedbackStatus ? (
             <p style={styles.feedbackThanks}>Thank you for helping our AI learn! 🌱</p>
@@ -215,7 +222,9 @@ const styles = {
   remedyIndex: { width: '22px', height: '22px', background: '#2d6a4f', color: '#fff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', flexShrink: 0 },
   remedyText: { margin: 0, fontSize: '14px', color: '#4a6358', lineHeight: '1.6' },
   expertTipBox: { background: '#1b4332', padding: '24px', borderRadius: '24px', marginBottom: '20px' },
+  photoTipBox:  { background: '#78350f', padding: '20px 24px', borderRadius: '24px', marginBottom: '20px' },
   tipLabel: { background: '#52b788', color: '#fff', fontSize: '10px', padding: '2px 8px', borderRadius: '4px', fontWeight: '900', marginBottom: '10px', display: 'inline-block' },
+  photoTipLabel:{ background: '#f59e0b', color: '#fff', fontSize: '10px', padding: '2px 8px', borderRadius: '4px', fontWeight: '900', marginBottom: '10px', display: 'inline-block' },
   tipText: { margin: 0, color: '#d8f3dc', fontSize: '14px', lineHeight: '1.6' },
   feedbackContainer: { textAlign: 'center', padding: '20px' },
   feedbackTitle: { fontSize: '14px', color: '#6a8378', marginBottom: '12px' },

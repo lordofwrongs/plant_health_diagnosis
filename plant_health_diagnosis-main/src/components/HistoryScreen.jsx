@@ -13,7 +13,7 @@ function friendlyError(errorDetails) {
   return 'Analysis failed. Tap Retry to try again.'
 }
 
-export default function HistoryScreen({ onSelectResult }) {
+export default function HistoryScreen({ onSelectResult, onRetakePhoto }) {
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(true)
   const [retrying, setRetrying] = useState({})
@@ -113,15 +113,16 @@ export default function HistoryScreen({ onSelectResult }) {
       ) : (
         <div style={styles.list}>
           {groups.map((group) => {
-            const isPending = group.latestScanStatus === 'pending'
-            const isError   = group.latestScanStatus === 'error'
-            const isRetrying = retrying[group.latestScanId]
+            const isPending      = group.latestScanStatus === 'pending'
+            const isError        = group.latestScanStatus === 'error'
+            const isQuality      = group.latestScanStatus === 'quality_issue'
+            const isRetrying     = retrying[group.latestScanId]
 
             return (
               <div
                 key={group.id}
-                style={{ ...styles.card, ...(isError ? styles.cardError : {}) }}
-                onClick={() => !isError && !isPending && onSelectResult(group.scans[0], group.scans)}
+                style={{ ...styles.card, ...(isError ? styles.cardError : {}), ...(isQuality ? styles.cardQuality : {}) }}
+                onClick={() => !isError && !isPending && !isQuality && onSelectResult(group.scans[0], group.scans)}
               >
                 <div style={styles.imageWrapper}>
                   <img src={group.latestImage} style={styles.thumbnail} alt="Latest" />
@@ -159,7 +160,21 @@ export default function HistoryScreen({ onSelectResult }) {
                     </>
                   )}
 
-                  {!isPending && !isError && (
+                  {isQuality && (
+                    <>
+                      <p style={styles.qualityMsg}>
+                        {group.latestErrorDetails || 'A clearer photo will give a more accurate result.'}
+                      </p>
+                      <button
+                        style={styles.retakeBtn}
+                        onClick={(e) => { e.stopPropagation(); onRetakePhoto?.() }}
+                      >
+                        📸 Retake Photo
+                      </button>
+                    </>
+                  )}
+
+                  {!isPending && !isError && !isQuality && (
                     <div style={styles.statusRow}>
                       <div style={{
                         ...styles.statusDot,
@@ -170,7 +185,7 @@ export default function HistoryScreen({ onSelectResult }) {
                   )}
                 </div>
 
-                {!isError && !isPending && <div style={styles.chevron}>›</div>}
+                {!isError && !isPending && !isQuality && <div style={styles.chevron}>›</div>}
               </div>
             )
           })}
@@ -193,6 +208,7 @@ const styles = {
     cursor: 'pointer', transition: 'all 0.2s ease', border: '1px solid #f0f4f2',
   },
   cardError:     { border: '1px solid #ffcdd2', background: '#fff8f8', cursor: 'default' },
+  cardQuality:   { border: '1px solid #ffe082', background: '#fffde7', cursor: 'default' },
   imageWrapper:  { position: 'relative', flexShrink: 0 },
   thumbnail:     { width: '85px', height: '85px', borderRadius: '18px', objectFit: 'cover', background: '#f0f4f2' },
   badge: {
@@ -209,8 +225,13 @@ const styles = {
   statusDot:     { width: '8px', height: '8px', borderRadius: '50%' },
   statusText:    { fontSize: '13px', fontWeight: '600', color: '#4a6358' },
   errorMsg:      { fontSize: '12px', color: '#c62828', marginBottom: '8px', lineHeight: '1.4' },
+  qualityMsg:    { fontSize: '12px', color: '#78350f', marginBottom: '8px', lineHeight: '1.4' },
   retryBtn: {
     padding: '7px 16px', background: '#2d6a4f', color: '#fff', border: 'none',
+    borderRadius: '10px', fontSize: '12px', fontWeight: '700', cursor: 'pointer',
+  },
+  retakeBtn: {
+    padding: '7px 16px', background: '#f59e0b', color: '#fff', border: 'none',
     borderRadius: '10px', fontSize: '12px', fontWeight: '700', cursor: 'pointer',
   },
   chevron:       { fontSize: '24px', color: '#cbdad2', marginLeft: '4px', fontWeight: '300' },
