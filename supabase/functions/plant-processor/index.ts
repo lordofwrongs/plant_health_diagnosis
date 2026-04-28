@@ -520,8 +520,8 @@ YOUR TASK:
 5. REGIONAL NAMES: Use traditional names used by locals — not literal translations.
 6. USER LANGUAGE: All user-facing text (except health_category) in ${userLang}.
 7. weather_alert: Only if weather data indicates genuine risk. Otherwise null.
-8. CARE STEPS: Make each step concrete and actionable. When recommending fertilisers, sprays, or soil treatments, name the product TYPE so users know what to buy — for example: "liquid seaweed fertiliser", "balanced granular fertiliser (NPK)", "neem oil spray", "compost or well-rotted manure", "slow-release fertiliser pellets", "copper-based fungicide spray". Never mention specific brand names.
-9. PRO TIP: Give a tip specific to growing this plant in "${log.location_name}". Only reference a region by name if the location is known — if location is "Unknown Location", give a universally practical tip instead. Never assume or default to "South Asia" unless the location confirms it.
+8. CARE STEPS: Make each step concrete and actionable. Look at the Weather context above and factor current conditions into your recommendations — if rainfall has been low, emphasise watering frequency or mulching to retain moisture; if peak temperatures are high, advise on shade cloth or watering timing; if rain has been heavy, flag drainage and fungal risk. When recommending fertilisers, sprays, or soil treatments, name the product TYPE so users know what to buy — for example: "liquid seaweed fertiliser", "balanced granular fertiliser (NPK)", "neem oil spray", "compost or well-rotted manure", "slow-release fertiliser pellets", "copper-based fungicide spray". Never mention specific brand names.
+9. PRO TIP: Write a single, practical tip that combines the plant's current needs with the actual weather forecast in the Weather context — reference the rain and temperature data specifically (e.g. "With only 0.4mm of rain this week and a peak of 24°C forecast, water deeply every other day…"). Only name the location if it is known and confirmed — never default to "South Asia" or any region that is not in the location data.
 
 RESPOND WITH THIS EXACT JSON (no markdown fences):
 {

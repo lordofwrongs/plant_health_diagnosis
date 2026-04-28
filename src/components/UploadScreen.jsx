@@ -43,25 +43,45 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
 
   const getLocationContext = async () => {
     setStatusMessage('Getting location...')
-    const ipFallback = async () => {
+
+    // Resolve a human-readable city name from the IP API.
+    // Used both as a standalone fallback and to name GPS coordinates.
+    const getCityFromIP = async () => {
       try {
         const res = await fetch('https://ipapi.co/json/')
         const data = await res.json()
-        return { lat: data.latitude, lng: data.longitude, name: `${data.city}, ${data.region}` }
+        const city = data.city
+        const country = data.country_name
+        return (city && country) ? `${city}, ${country}` : (city || null)
       } catch {
-        return { lat: null, lng: null, name: 'Unknown Location' }
+        return null
       }
     }
+
     try {
+      // GPS path — accurate coordinates but no human-readable name
       const position = await new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           enableHighAccuracy: true, timeout: 12000, maximumAge: 0,
         })
       })
-      return { lat: position.coords.latitude, lng: position.coords.longitude, name: null }
+      const lat = position.coords.latitude
+      const lng = position.coords.longitude
+      const name = await getCityFromIP()
+      return { lat, lng, name: name || 'Your Location' }
     } catch {
+      // GPS denied or timed out — fall back to IP for both coords and name
       setStatusMessage('Using approximate location...')
-      return await ipFallback()
+      try {
+        const res = await fetch('https://ipapi.co/json/')
+        const data = await res.json()
+        const city = data.city
+        const country = data.country_name
+        const name = (city && country) ? `${city}, ${country}` : (city || 'Your Location')
+        return { lat: data.latitude || null, lng: data.longitude || null, name }
+      } catch {
+        return { lat: null, lng: null, name: 'Your Location' }
+      }
     }
   }
 
@@ -122,7 +142,7 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
           status: 'pending',
           latitude: context?.lat,
           longitude: context?.lng,
-          location_name: context?.name || 'Unknown Location',
+          location_name: context?.name || 'Your Location',
           plant_nickname: nickname || null,
           preferred_language: userLanguage || 'English',
         }).select('id').single()
