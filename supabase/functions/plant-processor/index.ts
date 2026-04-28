@@ -495,7 +495,9 @@ Respond ONLY with JSON: { "is_analyzable": boolean, "photo_tip": string | null, 
     const result = await callGemini(
       GEMINI_KEY,
       [
-        'You are an expert botanist and horticultural coach specialising in South Asian plants.',
+        'You are an expert botanist and friendly horticultural coach helping everyday home gardeners.',
+        'Write in plain, warm, conversational language a non-expert can easily understand.',
+        'Never use botanical jargon (no "ovate", "lanceolate", "pinnate venation", "pubescent", "crenate", "cordate", "petiole" etc.) — always use everyday equivalents.',
         'Always respond with valid JSON only. All keys in vernacular_names must be lowercase.',
       ].join(' '),
       `CONTEXT:
@@ -512,18 +514,20 @@ ${identSection}
 
 YOUR TASK:
 1. IDENTIFICATION: Follow the identification strategy above precisely.
-2. HEALTH ASSESSMENT: Analyse leaf colour, turgor, spots, wilting, soil condition.
+2. HEALTH ASSESSMENT: Analyse leaf colour, turgor, spots, wilting, soil condition. Write like you are explaining to a friend who loves gardening but has no scientific background — warm, clear, jargon-free.
 3. health_category MUST be exactly one of: "healthy", "fair", or "critical" (English, always).
 4. health_status MUST be a SHORT badge label (2-4 words max) in ${userLang} — e.g. "Healthy", "Needs Attention", "Stressed", "Critical Condition". Never a full sentence.
 5. REGIONAL NAMES: Use traditional names used by locals — not literal translations.
 6. USER LANGUAGE: All user-facing text (except health_category) in ${userLang}.
 7. weather_alert: Only if weather data indicates genuine risk. Otherwise null.
+8. CARE STEPS: Make each step concrete and actionable. When recommending fertilisers, sprays, or soil treatments, name the product TYPE so users know what to buy — for example: "liquid seaweed fertiliser", "balanced granular fertiliser (NPK)", "neem oil spray", "compost or well-rotted manure", "slow-release fertiliser pellets", "copper-based fungicide spray". Never mention specific brand names.
+9. PRO TIP: Give a tip specific to growing this plant in "${log.location_name}". Only reference a region by name if the location is known — if location is "Unknown Location", give a universally practical tip instead. Never assume or default to "South Asia" unless the location confirms it.
 
 RESPOND WITH THIS EXACT JSON (no markdown fences):
 {
   "independent_id": "Scientific name from YOUR own visual analysis (Step 1)",
   "agrees_with_specialist": true,
-  "visual_features": "One sentence: petiole attachment point, leaf shape, texture, stem, growth pattern",
+  "visual_features": "One plain-English sentence describing what you see — leaf shape and colour, stem type, how it grows. No botanical jargon.",
   "display_name": "Most culturally relatable name in ${userLang}",
   "final_scientific_name": "Genus species (reconciled winner)",
   "vernacular_names": {
@@ -534,9 +538,9 @@ RESPOND WITH THIS EXACT JSON (no markdown fences):
   },
   "health_category": "healthy",
   "health_status": "Healthy",
-  "analysis": "Detailed health analysis in ${userLang}",
-  "recovery_steps": ["Step 1 in ${userLang}", "Step 2", "Step 3"],
-  "pro_tip": "Regional gardening tip for ${log.location_name} in ${userLang}",
+  "analysis": "Plain-language health assessment in ${userLang} — what you see, what it means, written warmly for a home gardener.",
+  "recovery_steps": ["Concrete action in ${userLang}. If a fertiliser or spray is needed, name the product type (e.g. liquid seaweed fertiliser, neem oil spray) — no brand names."],
+  "pro_tip": "A practical, location-specific tip for ${log.location_name !== 'Unknown Location' ? log.location_name : 'home gardeners'} in ${userLang}. Do not mention South Asia unless location confirms it.",
   "weather_alert": null
 }`,
       imageBase64, imageMimeType, logger, 'stage3_analysis',
