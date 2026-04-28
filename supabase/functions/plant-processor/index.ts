@@ -127,6 +127,8 @@ async function callGemini(
         generationConfig: {
           responseMimeType: 'application/json',
           temperature,
+          // Disable thinking mode — adds 2-4s latency for no benefit on structured JSON tasks
+          thinkingConfig: { thinkingBudget: 0 },
         },
       }),
     },
@@ -160,12 +162,15 @@ async function identifyWithPlantNet(
   apiKey: string,
   imageBytes: Uint8Array,
   mimeType: string,
+  organ: string,
   logger: ReturnType<typeof createLogger>
 ): Promise<PlantNetResult | null> {
   try {
     const formData = new FormData()
     formData.append('images', new Blob([imageBytes.buffer as ArrayBuffer], { type: mimeType }), 'plant.jpg')
-    formData.append('organs', 'auto')
+    // Use the organ detected by the quality gate. Defaults to 'leaf' for seedlings/young plants.
+    // Only overridden to 'flower'/'fruit' when Gemini clearly identifies that as the main subject.
+    formData.append('organs', organ)
 
     const res = await fetchWithTimeout(
       `https://my-api.plantnet.org/v2/identify/all?api-key=${apiKey}&lang=en&include-related-images=false&nb-results=3`,
@@ -248,6 +253,51 @@ function healthCategoryToColor(category: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Regional growing context — improves seedling ID for home gardeners
+// Returns a hint string that is injected into the Gemini identification prompt.
+// Empty string for unknown/unsupported regions (no-op).
+// ---------------------------------------------------------------------------
+function getRegionalContext(locationName: string): string {
+  const loc = (locationName || '').toLowerCase()
+
+  const isIndia = [
+    'india', 'tamil', 'kerala', 'karnataka', 'andhra', 'telangana', 'maharashtra',
+    'gujarat', 'rajasthan', 'punjab', 'bengal', 'odisha', 'bihar', 'chennai',
+    'mumbai', 'delhi', 'bangalore', 'bengaluru', 'hyderabad', 'kolkata', 'pune',
+    'coimbatore', 'kochi', 'vizag', 'madurai', 'mysore', 'nagpur', 'surat',
+    'jaipur', 'lucknow', 'patna', 'bhubaneswar', 'indore', 'bhopal',
+    'thiruvananthapuram', 'vijayawada', 'mangalore',
+  ].some(k => loc.includes(k))
+
+  if (isIndia) {
+    return `Regional growing context — common Indian home garden vegetables (many grown as seedlings): ` +
+      `snake gourd/padwal (Trichosanthes cucumerina), ridge gourd/turai (Luffa acutangula), ` +
+      `bitter gourd/karela (Momordica charantia), bottle gourd/lauki (Lagenaria siceraria), ` +
+      `cucumber/kakdi (Cucumis sativus), brinjal/baingan (Solanum melongena), ` +
+      `tomato (Solanum lycopersicum), chilli/mirchi (Capsicum annuum), ` +
+      `okra/bhindi (Abelmoschus esculentus), moringa/drumstick (Moringa oleifera), ` +
+      `curry leaf (Murraya koenigii). ` +
+      `IMPORTANT: Cucurbit seedlings (snake gourd, ridge gourd, bitter gourd, bottle gourd, cucumber, muskmelon) ` +
+      `look nearly identical at early stages — carefully examine petiole attachment point, ` +
+      `leaf lobe depth, stem cross-section, and tendril position to distinguish between them.`
+  }
+
+  const isSEA = [
+    'thailand', 'vietnam', 'indonesia', 'malaysia', 'philippines',
+    'singapore', 'myanmar', 'cambodia', 'laos',
+  ].some(k => loc.includes(k))
+
+  if (isSEA) {
+    return `Regional growing context — common Southeast Asian home garden plants: ` +
+      `bitter gourd (Momordica charantia), winged bean (Psophocarpus tetragonolobus), ` +
+      `moringa (Moringa oleifera), water spinach (Ipomoea aquatica), ` +
+      `lemongrass (Cymbopogon citratus), pandan (Pandanus amaryllifolius), galangal (Alpinia galanga).`
+  }
+
+  return ''
+}
+
+// ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
 serve(async (req: Request) => {
@@ -325,13 +375,22 @@ Common tips (use the most relevant one, or null if photo is already good):
 - Dark lighting: "Take the photo in natural daylight for accurate leaf color analysis"
 - Only pot/soil visible: "Focus on the leaves and stem rather than the whole pot"
 
-Respond ONLY with JSON: { "is_analyzable": boolean, "photo_tip": string | null }`,
+organ: Identify the PRIMARY plant part visible.
+- "leaf" — DEFAULT. Use for seedlings, young plants, or any image where leaves/stems dominate.
+- "flower" — ONLY if a flower is unmistakably the main subject (petals, stamens clearly visible).
+- "fruit" — ONLY if a fruit/vegetable is unmistakably the main subject.
+- "bark" — ONLY if bark or trunk texture is the main subject.
+- "habit" — ONLY if the whole plant from a distance is the main subject with no close-up detail.
+When in doubt, use "leaf".
+
+Respond ONLY with JSON: { "is_analyzable": boolean, "photo_tip": string | null, "organ": "leaf" | "flower" | "fruit" | "bark" | "habit" }`,
       imageBase64, imageMimeType, logger, 'stage1_quality',
       0,     // temperature 0 — deterministic gate decision
       20000
-    ) as { is_analyzable: boolean; photo_tip: string | null }
+    ) as { is_analyzable: boolean; photo_tip: string | null; organ: string }
     logger.endTimer('stage1_quality')
-    logger.info('stage1_quality', `is_analyzable=${quality.is_analyzable}, tip=${quality.photo_tip}`)
+    const detectedOrgan = quality.organ || 'leaf'
+    logger.info('stage1_quality', `is_analyzable=${quality.is_analyzable}, organ=${detectedOrgan}, tip=${quality.photo_tip}`)
 
     if (!quality.is_analyzable) {
       const tip = quality.photo_tip ?? 'Please take a clear photo of the plant with good lighting.'
@@ -351,8 +410,8 @@ Respond ONLY with JSON: { "is_analyzable": boolean, "photo_tip": string | null }
     const threshold = 0.0001
 
     const [plantNet, nearbyResult, weatherSnippet] = await Promise.all([
-      // 2a. PlantNet specialized identification
-      identifyWithPlantNet(PLANTNET_KEY, imageBytes, imageMimeType, logger),
+      // 2a. PlantNet specialized identification — organ detected by quality gate
+      identifyWithPlantNet(PLANTNET_KEY, imageBytes, imageMimeType, detectedOrgan, logger),
 
       // 2b. Previous scan history for this plant/location
       supabase
@@ -431,6 +490,8 @@ Respond ONLY with JSON: { "is_analyzable": boolean, "photo_tip": string | null }
         `then name it. Set independent_id = final_scientific_name and agrees_with_specialist = false.`
     }
 
+    const regionalContext = getRegionalContext(log.location_name)
+
     const result = await callGemini(
       GEMINI_KEY,
       [
@@ -439,9 +500,13 @@ Respond ONLY with JSON: { "is_analyzable": boolean, "photo_tip": string | null }
       ].join(' '),
       `CONTEXT:
 Location: ${log.location_name}
-Weather: ${weatherSnippet}
+${regionalContext ? `${regionalContext}\n` : ''}Weather: ${weatherSnippet}
 History: ${historyContext}
-User Hint: "${nickname || 'None provided'}"
+${nickname
+  ? `USER-LABELED THIS PLANT AS: "${nickname}" — treat this as a strong identification hint. ` +
+    `Validate visually: if the visual evidence supports it, confirm it as the identification. ` +
+    `Only override it if the visual evidence clearly and definitively contradicts the label.`
+  : 'User did not provide a plant name.'}
 
 ${identSection}
 
@@ -536,9 +601,10 @@ RESPOND WITH THIS EXACT JSON (no markdown fences):
         CarePlan:           Array.isArray(result.recovery_steps)
                               ? result.recovery_steps.map((s: unknown) => `• ${String(s)}`).join('\n')
                               : String(result.recovery_steps ?? ''),
-        ExpertTip:          result.pro_tip,
-        WeatherAlert:       result.weather_alert ?? null,
-        status:             'done',
+        ExpertTip:           result.pro_tip,
+        WeatherAlert:        result.weather_alert ?? null,
+        plantnet_candidates: plantNet?.topCandidates ?? [],
+        status:              'done',
         // Store photo_tip in error_details so ResultsScreen can surface it as gentle guidance
         error_details:      quality.photo_tip ?? null,
         processing_log:     logger.getLog(),

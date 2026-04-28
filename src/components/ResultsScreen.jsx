@@ -106,6 +106,18 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
               <span style={styles.confidenceLabel}>AI Confidence</span>
               <span style={styles.confidenceValue}>{result?.AccuracyScore}%</span>
             </div>
+
+            {/* Alternatives — shown when confidence ≤ 80% and PlantNet had other candidates */}
+            {result?.AccuracyScore <= 80 &&
+             Array.isArray(result?.plantnet_candidates) &&
+             result.plantnet_candidates.length > 1 && (
+              <div style={styles.altRow}>
+                <span style={styles.altLabel}>Could also be:</span>
+                {result.plantnet_candidates.slice(1).map((c, i) => (
+                  <span key={i} style={styles.altChip}>{c.common || c.name}</span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -378,6 +390,27 @@ const styles = {
     fontSize: '12px',
     color: 'var(--primary)',
     fontWeight: '800',
+  },
+
+  altRow: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '6px',
+    marginTop: '10px',
+  },
+  altLabel: {
+    fontSize: '11px',
+    color: 'var(--text-4)',
+    fontWeight: '600',
+  },
+  altChip: {
+    fontSize: '11px',
+    color: 'var(--text-3)',
+    background: 'var(--mist)',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--r-full)',
+    padding: '2px 10px',
   },
 
   section: {
