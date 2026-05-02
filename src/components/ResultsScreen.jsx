@@ -94,8 +94,16 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
           ...(conf.border !== 'transparent' ? { border: `2px solid ${conf.border}` } : {}),
         }}>
           <div style={styles.imgWrap}>
-            <img src={result?.image_url} alt="Scanned plant" style={styles.heroImg} />
-            <div style={{ ...styles.healthPill, background: healthColor.bg, color: healthColor.text }}>
+            <img
+              src={result?.image_url}
+              alt={result?.PlantName ? `Photo of ${result.PlantName}` : 'Scanned plant photo'}
+              style={styles.heroImg}
+            />
+            <div
+              style={{ ...styles.healthPill, background: healthColor.bg, color: healthColor.text }}
+              role="status"
+              aria-label={`Health status: ${result?.HealthStatus || 'Analysing'}`}
+            >
               <span style={{ ...styles.healthDot, background: healthColor.dot }} />
               {result?.HealthStatus || 'Analysing...'}
             </div>
@@ -251,6 +259,30 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
                 {result.care_schedule.notes}
               </p>
             )}
+          </div>
+        )}
+
+        {/* Pest detection */}
+        {result?.pest_detected && result?.pest_name && (
+          <div className="fade-up-delay-2 verdant-card" style={{ ...styles.section, ...styles.pestSection }} role="alert" aria-label="Pest detected">
+            <div style={styles.pestHeader}>
+              <span style={{ fontSize: '22px', flexShrink: 0 }} aria-hidden="true">🐛</span>
+              <div>
+                <h3 style={{ ...styles.sectionTitle, color: '#C2410C', marginBottom: '2px' }}>Pest Detected</h3>
+                <p style={styles.pestName}>{result.pest_name}</p>
+              </div>
+            </div>
+            {Array.isArray(result.pest_treatment) && (
+              <div style={styles.stepList}>
+                {result.pest_treatment.map((step, i) => (
+                  <div key={i} style={styles.stepItem}>
+                    <div style={{ ...styles.stepNum, background: '#EA580C' }} aria-hidden="true">{i + 1}</div>
+                    <p style={styles.stepText}>{String(step)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p style={styles.pestWarning}>Check nearby plants for early signs of the same pest.</p>
           </div>
         )}
 
@@ -744,6 +776,34 @@ const styles = {
     color: 'var(--mid)',
     fontWeight: '600',
     fontSize: '14px',
+  },
+
+  pestSection: {
+    background: '#FFF7ED',
+    border: '1px solid #FED7AA',
+  },
+  pestHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    marginBottom: '16px',
+  },
+  pestName: {
+    fontSize: '16px',
+    fontWeight: '700',
+    color: '#9A3412',
+    margin: 0,
+  },
+  pestWarning: {
+    marginTop: '14px',
+    fontSize: '12px',
+    color: '#92400E',
+    fontStyle: 'italic',
+    padding: '8px 12px',
+    background: '#FEF3C7',
+    borderRadius: 'var(--r-sm)',
+    border: '1px solid #FDE68A',
+    margin: '14px 0 0',
   },
 
   scheduleGrid: {

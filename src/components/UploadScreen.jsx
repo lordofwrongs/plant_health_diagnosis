@@ -4,18 +4,26 @@ import { logger } from '../logger.js'
 
 const BUCKET = 'plant_images'
 
+const SLOTS = [
+  { key: 'whole', label: 'Whole plant',    hint: 'Side angle, full plant visible', icon: '🌿' },
+  { key: 'leaf',  label: 'Leaf close-up',  hint: 'Fill frame with leaf detail',    icon: '🍃' },
+  { key: 'stem',  label: 'Stem & soil',    hint: 'Base and growth habit',          icon: '🌱' },
+]
+
 export default function UploadScreen({ onUploadComplete, userLanguage }) {
-  const [previews, setPreviews] = useState([])
-  const [files, setFiles] = useState([])
+  const [slotImages, setSlotImages] = useState({ whole: null, leaf: null, stem: null })
   const [nickname, setNickname] = useState('')
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState(null)
   const [statusMessage, setStatusMessage] = useState('')
-  const [dragOver, setDragOver] = useState(false)
-  const inputRef = useRef()
   const isProcessing = useRef(false)
   const [totalScans, setTotalScans] = useState(null)
   const [guideOpen, setGuideOpen] = useState(false)
+
+  const wholeRef = useRef()
+  const leafRef  = useRef()
+  const stemRef  = useRef()
+  const slotRefs = { whole: wholeRef, leaf: leafRef, stem: stemRef }
 
   useEffect(() => {
     supabase.rpc('get_total_scans').then(({ data }) => {
@@ -23,37 +31,30 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
     })
   }, [])
 
-  const handleFiles = (fileList) => {
-    const all = Array.from(fileList)
-    const heicFiles = all.filter(f =>
-      f.type === 'image/heic' || f.type === 'image/heif' || /\.heic$/i.test(f.name)
-    )
-    if (heicFiles.length > 0) {
+  const handleSlotFile = (key, fileList) => {
+    const file = Array.from(fileList).find(f => f.type.startsWith('image/'))
+    if (!file) return
+    if (file.type === 'image/heic' || file.type === 'image/heif' || /\.heic$/i.test(file.name)) {
       setError('HEIC photos are not supported. Please export as JPEG from your Photos app first.')
-      logger.warn('UploadScreen', `Rejected ${heicFiles.length} HEIC file(s)`)
       return
     }
-    const selectedFiles = all.filter(f => f.type.startsWith('image/'))
-    if (selectedFiles.length === 0) return
-    setFiles(prev => [...prev, ...selectedFiles])
-    setPreviews(prev => [...prev, ...selectedFiles.map(f => URL.createObjectURL(f))])
+    setSlotImages(prev => {
+      if (prev[key]?.preview) URL.revokeObjectURL(prev[key].preview)
+      return { ...prev, [key]: { file, preview: URL.createObjectURL(file) } }
+    })
     setError(null)
   }
 
-  const removeImage = (e, index) => {
-    e.stopPropagation()
-    setFiles(prev => prev.filter((_, i) => i !== index))
-    setPreviews(prev => {
-      URL.revokeObjectURL(prev[index])
-      return prev.filter((_, i) => i !== index)
+  const removeSlot = (key) => {
+    setSlotImages(prev => {
+      if (prev[key]?.preview) URL.revokeObjectURL(prev[key].preview)
+      return { ...prev, [key]: null }
     })
   }
 
   const getLocationContext = async () => {
     setStatusMessage('Getting location...')
 
-    // Resolve a human-readable city name from the IP API.
-    // Used both as a standalone fallback and to name GPS coordinates.
     const getCityFromIP = async () => {
       try {
         const res = await fetch('https://ipapi.co/json/')
@@ -67,7 +68,6 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
     }
 
     try {
-      // GPS path — accurate coordinates but no human-readable name
       const position = await new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           enableHighAccuracy: true, timeout: 12000, maximumAge: 0,
@@ -78,7 +78,6 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
       const name = await getCityFromIP()
       return { lat, lng, name: name || 'Your Location' }
     } catch {
-      // GPS denied or timed out — fall back to IP for both coords and name
       setStatusMessage('Using approximate location...')
       try {
         const res = await fetch('https://ipapi.co/json/')
@@ -120,21 +119,22 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
   }
 
   const handleSubmit = async () => {
-    if (files.length === 0 || uploading || isProcessing.current) return
+    const activeSlots = SLOTS.map(s => slotImages[s.key]).filter(Boolean)
+    if (activeSlots.length === 0 || uploading || isProcessing.current) return
     isProcessing.current = true
     setUploading(true)
     setError(null)
 
     const guestId = localStorage.getItem('plant_care_guest_id')
-    logger.info('UploadScreen', `Submit started: ${files.length} file(s), lang=${userLanguage}`, { guest_id: guestId })
+    logger.info('UploadScreen', `Submit: ${activeSlots.length} photo(s), lang=${userLanguage}`, { guest_id: guestId })
 
     try {
       const [context, compressedFiles] = await Promise.all([
         getLocationContext(),
-        Promise.all(files.map(f => compressImage(f))),
+        Promise.all(activeSlots.map(slot => compressImage(slot.file))),
       ])
 
-      setStatusMessage(`Uploading ${files.length} image${files.length > 1 ? 's' : ''}...`)
+      setStatusMessage(`Uploading ${activeSlots.length} photo${activeSlots.length > 1 ? 's' : ''}...`)
 
       const imageUrls = await Promise.all(compressedFiles.map(async (file) => {
         const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`
@@ -143,25 +143,25 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
         return supabase.storage.from(BUCKET).getPublicUrl(fileName).data.publicUrl
       }))
 
-      const dbResults = await Promise.all(imageUrls.map(url =>
-        supabase.from('plant_logs').insert({
-          user_id: guestId,
-          image_url: url,
-          status: 'pending',
-          latitude: context?.lat,
-          longitude: context?.lng,
-          location_name: context?.name || 'Your Location',
-          plant_nickname: nickname || null,
+      // Always create a single record — multiple angles belong to one diagnosis
+      const { data: record, error: dbErr } = await supabase
+        .from('plant_logs')
+        .insert({
+          user_id:           guestId,
+          image_url:         imageUrls[0],
+          additional_images: imageUrls.slice(1),
+          status:            'pending',
+          latitude:          context?.lat,
+          longitude:         context?.lng,
+          location_name:     context?.name || 'Your Location',
+          plant_nickname:    nickname || null,
           preferred_language: userLanguage || 'English',
-        }).select('id').single()
-      ))
+        })
+        .select('id')
+        .single()
 
-      const createdIds = dbResults.map(res => {
-        if (res.error) throw new Error(`Database error: ${res.error.message}`)
-        return res.data.id
-      })
-
-      onUploadComplete(createdIds)
+      if (dbErr) throw new Error(`Database error: ${dbErr.message}`)
+      onUploadComplete([record.id])
     } catch (err) {
       logger.error('UploadScreen', `Submit failed: ${err.message}`, { guest_id: guestId })
       const isNetwork = err.message.includes('fetch') || err.message.includes('network') || err.message.includes('Failed to fetch')
@@ -171,7 +171,8 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
     }
   }
 
-  const hasPhotos = previews.length > 0
+  const activeCount = Object.values(slotImages).filter(Boolean).length
+  const hasPhotos   = activeCount > 0
 
   return (
     <div style={styles.page}>
@@ -187,69 +188,79 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
       {/* Card */}
       <div className="fade-up-delay-1 verdant-card" style={styles.card}>
 
-        {/* Drop zone */}
-        <div
-          style={{
-            ...styles.dropZone,
-            ...(hasPhotos ? styles.dropZoneActive : {}),
-            ...(dragOver ? styles.dropZoneDrag : {}),
-          }}
-          onClick={() => !uploading && inputRef.current.click()}
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files) }}
-        >
-          {hasPhotos ? (
-            <div style={styles.previewGrid}>
-              {previews.map((src, i) => (
-                <div key={i} style={styles.previewItem}>
-                  <img src={src} style={styles.previewImg} alt="Preview" />
-                  {!uploading && (
-                    <button style={styles.removeBtn} onClick={(e) => removeImage(e, i)} aria-label="Remove">✕</button>
+        {/* 3-slot guided capture */}
+        <p style={styles.slotsLabel}>
+          Add up to 3 photos for the most accurate diagnosis
+          <span style={styles.slotsOptional}> — 1 minimum</span>
+        </p>
+        <div style={styles.slotsRow} role="group" aria-label="Plant photo slots">
+          {SLOTS.map(({ key, label, hint, icon }) => {
+            const slot = slotImages[key]
+            return (
+              <div key={key} style={styles.slotWrap}>
+                <div
+                  style={{ ...styles.slot, ...(slot ? styles.slotFilled : {}) }}
+                  onClick={() => !uploading && slotRefs[key].current.click()}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={slot ? `Replace ${label} photo` : `Add ${label} photo`}
+                  onKeyDown={e => e.key === 'Enter' && !uploading && slotRefs[key].current.click()}
+                >
+                  {slot ? (
+                    <>
+                      <img src={slot.preview} style={styles.slotImg} alt={`${label} preview`} />
+                      {!uploading && (
+                        <button
+                          style={styles.slotRemove}
+                          onClick={e => { e.stopPropagation(); removeSlot(key) }}
+                          aria-label={`Remove ${label} photo`}
+                        >✕</button>
+                      )}
+                    </>
+                  ) : (
+                    <div style={styles.slotEmpty} aria-hidden="true">
+                      <span style={styles.slotIcon}>{icon}</span>
+                      <span style={styles.slotPlus}>+</span>
+                    </div>
                   )}
                 </div>
-              ))}
-              <div style={styles.addMoreTile}>
-                <span style={styles.addMorePlus}>+</span>
-                <span style={styles.addMoreLabel}>Add more</span>
+                <p style={styles.slotLabel} aria-hidden="true">{label}</p>
+                <p style={styles.slotHint}  aria-hidden="true">{hint}</p>
+                <input
+                  ref={slotRefs[key]}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={e => handleSlotFile(key, e.target.files)}
+                  aria-hidden="true"
+                  tabIndex={-1}
+                />
               </div>
-            </div>
-          ) : (
-            <div style={styles.dropContent}>
-              <div style={styles.cameraRing}>
-                <CameraIcon />
-              </div>
-              <p style={styles.dropTitle}>Take or upload a photo</p>
-              <p style={styles.dropHint}>Supports JPEG, PNG, WEBP · Multiple photos for better accuracy</p>
-            </div>
-          )}
+            )
+          })}
         </div>
-
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          style={{ display: 'none' }}
-          onChange={(e) => handleFiles(e.target.files)}
-        />
 
         {/* Photo guide */}
         <div style={styles.photoGuide}>
-          <button style={styles.photoGuideHeader} onClick={() => setGuideOpen(o => !o)}>
-            <span style={styles.tipIcon}>📷</span>
+          <button
+            style={styles.photoGuideHeader}
+            onClick={() => setGuideOpen(o => !o)}
+            aria-expanded={guideOpen}
+            aria-controls="photo-guide-body"
+          >
+            <span style={styles.tipIcon} aria-hidden="true">📷</span>
             <span style={styles.photoGuideTitle}>How to get the best result</span>
-            <span style={styles.photoGuideChev}>{guideOpen ? '▲' : '▼'}</span>
+            <span style={styles.photoGuideChev} aria-hidden="true">{guideOpen ? '▲' : '▼'}</span>
           </button>
           {guideOpen && (
-            <div style={styles.photoGuideBody}>
+            <div id="photo-guide-body" style={styles.photoGuideBody}>
               {[
                 { n: 1, title: 'Side angle at leaf level', hint: 'Shows how leaves attach to the stem — the key to accurate identification' },
                 { n: 2, title: 'Close-up of one leaf', hint: 'Fill the frame with texture, colour, and edge detail' },
                 { n: 3, title: 'Stem and soil base', hint: 'Reveals growth habit — especially useful for seedlings' },
               ].map(({ n, title, hint }) => (
                 <div key={n} style={styles.photoStep}>
-                  <div style={styles.photoStepNum}>{n}</div>
+                  <div style={styles.photoStepNum} aria-hidden="true">{n}</div>
                   <div>
                     <p style={styles.photoStepTitle}>{title}</p>
                     <p style={styles.photoStepHint}>{hint}</p>
@@ -262,45 +273,53 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
 
         {/* Nickname */}
         <div style={styles.field}>
-          <label style={styles.fieldLabel}>Nickname <span style={styles.optional}>(optional)</span></label>
+          <label htmlFor="plant-nickname" style={styles.fieldLabel}>
+            Nickname <span style={styles.optional}>(optional)</span>
+          </label>
           <input
+            id="plant-nickname"
             type="text"
             placeholder="e.g. Backyard Tomato"
             value={nickname}
-            onChange={(e) => setNickname(e.target.value)}
+            onChange={e => setNickname(e.target.value)}
             style={styles.input}
             disabled={uploading}
           />
         </div>
 
-        {error && <div style={styles.errorBox}>{error}</div>}
+        {error && <div style={styles.errorBox} role="alert">{error}</div>}
 
         {/* CTA */}
         <button
-          style={{ ...styles.cta, ...((files.length === 0 || uploading) ? styles.ctaDisabled : {}) }}
+          style={{ ...styles.cta, ...(!hasPhotos || uploading ? styles.ctaDisabled : {}) }}
           onClick={handleSubmit}
-          disabled={files.length === 0 || uploading}
+          disabled={!hasPhotos || uploading}
+          aria-busy={uploading}
+          aria-disabled={!hasPhotos || uploading}
         >
           {uploading ? (
-            <span>{statusMessage || 'Preparing...'}</span>
+            <span aria-live="polite">{statusMessage || 'Preparing...'}</span>
           ) : (
             <span>
-              {files.length === 0
+              {!hasPhotos
                 ? 'Analyse Plant'
-                : `Analyse ${files.length} Photo${files.length > 1 ? 's' : ''}`}
+                : `Analyse ${activeCount} Photo${activeCount > 1 ? 's' : ''}`}
             </span>
           )}
         </button>
 
         {hasPhotos && !uploading && (
-          <button style={styles.clearLink} onClick={() => { setFiles([]); setPreviews([]) }}>
-            Clear all
+          <button
+            style={styles.clearLink}
+            onClick={() => setSlotImages({ whole: null, leaf: null, stem: null })}
+          >
+            Clear all photos
           </button>
         )}
       </div>
 
       {/* Trust bar */}
-      <div className="fade-up-delay-2" style={styles.trustBar}>
+      <div className="fade-up-delay-2" style={styles.trustBar} aria-label="Trust indicators">
         {totalScans != null && (
           <span style={{ ...styles.trustItem, ...styles.trustItemCount }}>
             🌿 {totalScans.toLocaleString()} plants analysed
@@ -359,135 +378,144 @@ const styles = {
     marginBottom: '24px',
   },
 
-  dropZone: {
-    border: '2px dashed var(--border)',
+  slotsLabel: {
+    fontSize: '13px',
+    fontWeight: '600',
+    color: 'var(--text-2)',
+    marginBottom: '14px',
+    lineHeight: '1.4',
+  },
+  slotsOptional: {
+    fontWeight: '400',
+    color: 'var(--text-4)',
+  },
+  slotsRow: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, 1fr)',
+    gap: '12px',
+    marginBottom: '18px',
+  },
+  slotWrap: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '6px',
+  },
+  slot: {
+    width: '100%',
+    aspectRatio: '1',
     borderRadius: 'var(--r-md)',
-    minHeight: '180px',
+    border: '2px dashed var(--border)',
+    background: 'var(--mist)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     cursor: 'pointer',
-    transition: 'border-color 0.2s, background 0.2s',
-    background: 'var(--mist)',
-    marginBottom: '18px',
+    position: 'relative',
+    overflow: 'hidden',
+    transition: 'border-color 0.2s, box-shadow 0.2s',
+    outline: 'none',
   },
-  dropZoneActive: {
+  slotFilled: {
     border: '2px solid var(--leaf)',
-    background: 'var(--sage)',
+    boxShadow: '0 0 0 3px rgba(82,183,136,0.15)',
   },
-  dropZoneDrag: {
-    border: '2px solid var(--mid)',
-    background: 'var(--sage)',
-    transform: 'scale(1.01)',
-  },
-
-  dropContent: {
+  slotEmpty: {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    gap: '10px',
-    padding: '20px',
+    gap: '4px',
+    pointerEvents: 'none',
   },
-  cameraRing: {
-    width: '64px',
-    height: '64px',
-    borderRadius: '50%',
-    background: 'var(--card)',
-    border: '1px solid var(--border)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxShadow: 'var(--shadow-sm)',
-  },
-  dropTitle: {
-    fontSize: '15px',
-    fontWeight: '600',
-    color: 'var(--text-2)',
-    margin: 0,
-  },
-  dropHint: {
-    fontSize: '12px',
+  slotIcon: { fontSize: '24px', lineHeight: 1 },
+  slotPlus: {
+    fontSize: '18px',
     color: 'var(--text-4)',
-    margin: 0,
-    textAlign: 'center',
+    fontWeight: '300',
+    lineHeight: 1,
   },
-
-  previewGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, 1fr)',
-    gap: '10px',
-    padding: '16px',
+  slotImg: {
     width: '100%',
-  },
-  previewItem: {
-    position: 'relative',
-    height: '90px',
-  },
-  previewImg: {
-    width: '100%',
-    height: '90px',
+    height: '100%',
     objectFit: 'cover',
-    borderRadius: 'var(--r-sm)',
-    border: '1px solid var(--border)',
   },
-  removeBtn: {
+  slotRemove: {
     position: 'absolute',
-    top: '-7px',
-    right: '-7px',
-    background: '#DC2626',
+    top: '5px',
+    right: '5px',
+    background: 'rgba(0,0,0,0.55)',
     color: '#fff',
     border: 'none',
     borderRadius: '50%',
-    width: '20px',
-    height: '20px',
+    width: '22px',
+    height: '22px',
     fontSize: '9px',
     fontWeight: '700',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    boxShadow: 'var(--shadow-sm)',
     zIndex: 10,
   },
-  addMoreTile: {
-    height: '90px',
-    borderRadius: 'var(--r-sm)',
-    border: '2px dashed var(--border)',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '2px',
-    background: 'var(--mist)',
-    cursor: 'pointer',
+  slotLabel: {
+    fontSize: '11px',
+    fontWeight: '700',
+    color: 'var(--text-2)',
+    textAlign: 'center',
+    margin: 0,
+    letterSpacing: '0.2px',
   },
-  addMorePlus: {
-    fontSize: '22px',
-    color: 'var(--leaf)',
-    lineHeight: 1,
-  },
-  addMoreLabel: {
+  slotHint: {
     fontSize: '10px',
-    fontWeight: '600',
-    color: 'var(--text-3)',
-    letterSpacing: '0.3px',
+    color: 'var(--text-4)',
+    textAlign: 'center',
+    margin: 0,
+    lineHeight: '1.3',
   },
 
-  tipRow: {
-    display: 'flex',
-    gap: '8px',
-    alignItems: 'flex-start',
-    background: 'var(--mist)',
+  photoGuide: {
     border: '1px solid var(--border)',
     borderRadius: 'var(--r-sm)',
-    padding: '10px 12px',
     marginBottom: '20px',
-    fontSize: '12px',
-    color: 'var(--text-2)',
-    lineHeight: '1.5',
+    overflow: 'hidden',
+    background: 'var(--mist)',
+  },
+  photoGuideHeader: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '10px 12px',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    textAlign: 'left',
   },
   tipIcon: { fontSize: '15px', flexShrink: 0 },
-  tipText: { margin: 0 },
+  photoGuideTitle: {
+    flex: 1,
+    fontSize: '12px',
+    fontWeight: '600',
+    color: 'var(--text-2)',
+  },
+  photoGuideChev: { fontSize: '10px', color: 'var(--text-4)' },
+  photoGuideBody: {
+    borderTop: '1px solid var(--border)',
+    padding: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+  photoStep: { display: 'flex', gap: '12px', alignItems: 'flex-start' },
+  photoStepNum: {
+    width: '20px', height: '20px', borderRadius: '50%',
+    background: 'var(--primary)', color: '#fff',
+    fontSize: '10px', fontWeight: '800',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    flexShrink: 0, marginTop: '1px',
+  },
+  photoStepTitle: { fontSize: '12px', fontWeight: '600', color: 'var(--text-1)', margin: 0, marginBottom: '2px' },
+  photoStepHint:  { fontSize: '11px', color: 'var(--text-3)', margin: 0, lineHeight: '1.4' },
 
   field: { marginBottom: '20px' },
   fieldLabel: {
@@ -574,56 +602,4 @@ const styles = {
     borderColor: 'rgba(82,183,136,0.4)',
     background: 'rgba(82,183,136,0.08)',
   },
-
-  photoGuide: {
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--r-sm)',
-    marginBottom: '20px',
-    overflow: 'hidden',
-    background: 'var(--mist)',
-  },
-  photoGuideHeader: {
-    width: '100%',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    padding: '10px 12px',
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    textAlign: 'left',
-  },
-  photoGuideTitle: {
-    flex: 1,
-    fontSize: '12px',
-    fontWeight: '600',
-    color: 'var(--text-2)',
-  },
-  photoGuideChev: { fontSize: '10px', color: 'var(--text-4)' },
-  photoGuideBody: {
-    borderTop: '1px solid var(--border)',
-    padding: '12px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '10px',
-  },
-  photoStep: { display: 'flex', gap: '12px', alignItems: 'flex-start' },
-  photoStepNum: {
-    width: '20px', height: '20px', borderRadius: '50%',
-    background: 'var(--primary)', color: '#fff',
-    fontSize: '10px', fontWeight: '800',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    flexShrink: 0, marginTop: '1px',
-  },
-  photoStepTitle: { fontSize: '12px', fontWeight: '600', color: 'var(--text-1)', margin: 0, marginBottom: '2px' },
-  photoStepHint:  { fontSize: '11px', color: 'var(--text-3)', margin: 0, lineHeight: '1.4' },
-}
-
-function CameraIcon() {
-  return (
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--leaf)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-      <circle cx="12" cy="13" r="4" />
-    </svg>
-  )
 }

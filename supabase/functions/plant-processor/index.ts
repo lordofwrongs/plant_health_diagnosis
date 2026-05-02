@@ -108,7 +108,8 @@ async function callGemini(
   logger: ReturnType<typeof createLogger>,
   stage: string,
   temperature = 0.1,
-  timeoutMs = 35000
+  timeoutMs = 35000,
+  extraImages: Array<{base64: string; mimeType: string}> = []
 ): Promise<Record<string, unknown>> {
   const res = await fetchWithRetry(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
@@ -122,6 +123,7 @@ async function callGemini(
           parts: [
             { text: userText },
             { inlineData: { mimeType: imageMimeType, data: imageBase64 } },
+            ...extraImages.map(img => ({ inlineData: { mimeType: img.mimeType, data: img.base64 } })),
           ],
         }],
         generationConfig: {
@@ -298,6 +300,14 @@ function getRegionalContext(locationName: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// SHA-256 hex digest of image bytes — used as PlantNet cache key
+// ---------------------------------------------------------------------------
+async function computeImageHash(bytes: Uint8Array): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', bytes.buffer as ArrayBuffer)
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+// ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
 serve(async (req: Request) => {
@@ -322,7 +332,7 @@ serve(async (req: Request) => {
     logger.startTimer('preflight')
     const { data: log, error: logError } = await supabase
       .from('plant_logs')
-      .select('latitude, longitude, location_name, created_at, preferred_language')
+      .select('latitude, longitude, location_name, created_at, preferred_language, additional_images')
       .eq('id', record_id)
       .single()
     if (logError) throw new Error(`Preflight DB fetch failed: ${logError.message}`)
@@ -335,14 +345,23 @@ serve(async (req: Request) => {
     // Image fetch — ONCE, reused for both Gemini (base64) and PlantNet (bytes)
     // -----------------------------------------------------------------------
     logger.startTimer('image_fetch')
-    const imgRes = await fetchWithTimeout(image_url, {}, 20000)
-    if (!imgRes.ok) throw new Error(`Image fetch failed: HTTP ${imgRes.status}`)
-    const imageBuffer   = await imgRes.arrayBuffer()
-    const imageBytes    = new Uint8Array(imageBuffer)
-    const imageMimeType = (imgRes.headers.get('content-type') || 'image/jpeg').split(';')[0].trim()
-    const imageBase64   = toBase64(imageBytes)
+    const allImageUrls = [image_url, ...(log.additional_images ?? []).filter(Boolean)]
+    const allImageData = await Promise.all(allImageUrls.map(async (url: string) => {
+      const res  = await fetchWithTimeout(url, {}, 20000)
+      if (!res.ok) throw new Error(`Image fetch failed: HTTP ${res.status}`)
+      const buf   = await res.arrayBuffer()
+      const bytes = new Uint8Array(buf)
+      const mime  = (res.headers.get('content-type') || 'image/jpeg').split(';')[0].trim()
+      return { bytes, mimeType: mime, base64: toBase64(bytes) }
+    }))
+    const primaryImage  = allImageData[0]
+    const imageBytes    = primaryImage.bytes
+    const imageMimeType = primaryImage.mimeType
+    const imageBase64   = primaryImage.base64
     logger.endTimer('image_fetch')
-    logger.info('image_fetch', `Size: ${(imageBytes.length / 1024).toFixed(0)}KB, type: ${imageMimeType}`)
+    logger.info('image_fetch', `${allImageData.length} image(s), primary: ${(imageBytes.length / 1024).toFixed(0)}KB, type: ${imageMimeType}`)
+
+    const imageHash = await computeImageHash(imageBytes)
 
     // -----------------------------------------------------------------------
     // STAGE 1 — Parallel: PlantNet ID + History + Weather
@@ -356,8 +375,26 @@ serve(async (req: Request) => {
     const threshold = 0.0001
 
     const [plantNet, nearbyResult, weatherSnippet] = await Promise.all([
-      // 1a. PlantNet — 'leaf' covers seedlings/young plants (the common case)
-      identifyWithPlantNet(PLANTNET_KEY, imageBytes, imageMimeType, 'leaf', logger),
+      // 1a. PlantNet — cache-aware: check plantnet_cache first, call API on miss
+      (async () => {
+        const { data: cached } = await supabase
+          .from('plantnet_cache')
+          .select('result')
+          .eq('image_hash', imageHash)
+          .maybeSingle()
+
+        if (cached?.result) {
+          logger.info('plantnet', `Cache hit for hash ${imageHash.slice(0, 8)}…`)
+          return cached.result as PlantNetResult
+        }
+
+        const fresh = await identifyWithPlantNet(PLANTNET_KEY, imageBytes, imageMimeType, 'leaf', logger)
+        if (fresh) {
+          supabase.from('plantnet_cache').insert({ image_hash: imageHash, result: fresh })
+            .then(({ error }: { error: { message: string } | null }) => { if (error) logger.warn('plantnet_cache', `Write failed: ${error.message}`) })
+        }
+        return fresh
+      })(),
 
       // 1b. Previous scan history for this plant/location
       supabase
@@ -434,6 +471,15 @@ serve(async (req: Request) => {
 
     const regionalContext = getRegionalContext(log.location_name)
 
+    const multiAngleHeader = allImageData.length > 1
+      ? `MULTI-ANGLE ANALYSIS: ${allImageData.length} photos of the same plant have been provided.\n` +
+        `• Photo 1: Whole plant view\n` +
+        (allImageData.length >= 2 ? `• Photo 2: Leaf close-up\n` : '') +
+        (allImageData.length >= 3 ? `• Photo 3: Stem and soil base\n` : '') +
+        `Analyse ALL images together for the most accurate identification and health assessment.\n\n`
+      : ''
+    const extraImages = allImageData.slice(1).map(img => ({ base64: img.base64, mimeType: img.mimeType }))
+
     const result = await callGemini(
       GEMINI_KEY,
       [
@@ -442,7 +488,7 @@ serve(async (req: Request) => {
         'Never use botanical jargon (no "ovate", "lanceolate", "pinnate venation", "pubescent", "crenate", "cordate", "petiole" etc.) — always use everyday equivalents.',
         'Always respond with valid JSON only. All keys in vernacular_names must be lowercase.',
       ].join(' '),
-      `STEP 0 — IMAGE QUALITY CHECK (evaluate this before anything else):
+      `${multiAngleHeader}STEP 0 — IMAGE QUALITY CHECK (evaluate this before anything else):
 Determine if this image can produce a reliable plant identification.
 
 HARD REJECT (is_analyzable = false) ONLY when:
@@ -479,6 +525,7 @@ STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
 8. CARE STEPS: Make each step concrete and actionable. Factor current weather conditions into recommendations — if rainfall has been low, emphasise watering frequency or mulching; if peak temperatures are high, advise on shade cloth or watering timing; if rain has been heavy, flag drainage and fungal risk. When recommending fertilisers, sprays, or soil treatments, name the product TYPE (e.g. "liquid seaweed fertiliser", "balanced granular fertiliser (NPK)", "neem oil spray", "compost or well-rotted manure"). Never mention specific brand names.
 9. PRO TIP: A single practical tip combining the plant's current needs with the actual weather forecast — reference rain and temperature data specifically. Only name the location if it is known and confirmed.
 10. CARE SCHEDULE: Generate realistic care frequencies for this specific plant. Factor rainfall into water_every_days — reduce the interval if the past 7-day rain was < 5mm; increase it if > 20mm. notes is optional: one concise sentence for a care tip not already in recovery_steps, or null.
+11. PEST DETECTION: Examine the photo(s) closely for signs of pest damage — holes in leaves, webbing, sticky residue, yellowing patches, tunnelling, or visible insects/larvae. If clear pest signs are present, set pest_detected=true, identify the pest in pest_name, and provide 3-5 specific treatment steps in pest_treatment (name product types only, no brand names). If no evidence of pests, set pest_detected=false and pest_name/pest_treatment to null.
 
 RESPOND WITH THIS EXACT JSON (no markdown fences):
 {
@@ -507,10 +554,13 @@ RESPOND WITH THIS EXACT JSON (no markdown fences):
     "fertilise_every_days": 14,
     "check_pests_every_days": 7,
     "notes": null
-  }
+  },
+  "pest_detected": false,
+  "pest_name": null,
+  "pest_treatment": null
 }`,
       imageBase64, imageMimeType, logger, 'stage2_analysis',
-      0.1, 45000
+      0.1, 45000, extraImages
     )
 
     logger.endTimer('stage2_analysis')
@@ -586,6 +636,9 @@ RESPOND WITH THIS EXACT JSON (no markdown fences):
         ExpertTip:           result.pro_tip,
         WeatherAlert:        result.weather_alert ?? null,
         care_schedule:       result.care_schedule ?? null,
+        pest_detected:       Boolean(result.pest_detected),
+        pest_name:           typeof result.pest_name === 'string' ? result.pest_name : null,
+        pest_treatment:      Array.isArray(result.pest_treatment) ? result.pest_treatment : null,
         plantnet_candidates: plantNet?.topCandidates ?? [],
         status:              'done',
         // Store photo_tip as gentle guidance in ResultsScreen when image quality was imperfect
