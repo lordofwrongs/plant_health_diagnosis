@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import UploadScreen from './components/UploadScreen.jsx'
 import AnalysingScreen from './components/AnalysingScreen.jsx'
 import ResultsScreen from './components/ResultsScreen.jsx'
 import HistoryScreen from './components/HistoryScreen.jsx'
 import RegisterModal from './components/RegisterModal.jsx'
+import { supabase } from './supabaseClient.js'
 
 // ── BotanIQ logo mark + wordmark ─────────────────────────────────────────────
 function BotanIQMark({ size = 32 }) {
@@ -31,11 +32,62 @@ export default function App() {
   })
   const [showSettings, setShowSettings] = useState(false)
 
+  // Ensure guest_id exists for anonymous users
   useEffect(() => {
     if (!localStorage.getItem('plant_care_guest_id')) {
       localStorage.setItem('plant_care_guest_id', `guest_${Math.random().toString(36).slice(2, 11)}`)
     }
   }, [])
+
+  // Handle Supabase Auth session — fires on magic link callback and on returning visits
+  const handleAuthSession = useCallback(async (session) => {
+    const user    = session.user
+    const authId  = user.id
+    const guestId = localStorage.getItem('plant_care_guest_id')
+
+    // Skip if this auth user is already the active identity (e.g. token refresh)
+    if (guestId === authId) return
+
+    // Migrate guest plant_logs to the authenticated user id
+    if (guestId && guestId !== authId) {
+      await supabase.rpc('migrate_guest_to_user', {
+        p_guest_id: guestId,
+        p_user_id:  authId,
+      })
+    }
+
+    // From now on all scans are recorded under the auth user id
+    localStorage.setItem('plant_care_guest_id', authId)
+
+    // Persist user profile (name/phone come from magic link metadata)
+    const meta = user.user_metadata ?? {}
+    await supabase.from('user_profiles').upsert({
+      id:         authId,
+      email:      user.email,
+      first_name: meta.first_name ?? null,
+      last_name:  meta.last_name  ?? null,
+      phone:      meta.phone      ?? null,
+      guest_id:   guestId !== authId ? guestId : null,
+    }, { onConflict: 'id' })
+
+    localStorage.setItem('botaniq_registered', 'true')
+    setShowRegisterModal(false)
+  }, [])
+
+  useEffect(() => {
+    // Restore session on load (handles magic link redirect and returning users)
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) handleAuthSession(session)
+    })
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session) {
+        handleAuthSession(session)
+      }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [handleAuthSession])
 
   useEffect(() => {
     localStorage.setItem('plant_care_prefs', JSON.stringify(preferences))

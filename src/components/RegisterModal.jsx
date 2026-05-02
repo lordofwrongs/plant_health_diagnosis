@@ -5,10 +5,11 @@ export default function RegisterModal({ onComplete, onSkip }) {
   const [form, setForm] = useState({ firstName: '', lastName: '', email: '', phone: '' })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
+  const [linkSent, setLinkSent] = useState(false)
 
   const set = (field) => (e) => setForm(prev => ({ ...prev, [field]: e.target.value }))
 
-  const handleSubmit = async () => {
+  const sendMagicLink = async () => {
     if (!form.firstName.trim() || !form.lastName.trim() || !form.email.trim()) {
       setError('Please fill in your name and email.')
       return
@@ -23,25 +24,28 @@ export default function RegisterModal({ onComplete, onSkip }) {
     setError(null)
 
     const guestId = localStorage.getItem('plant_care_guest_id')
-    const { error: dbErr } = await supabase.from('users').insert({
-      guest_id:   guestId,
-      first_name: form.firstName.trim(),
-      last_name:  form.lastName.trim(),
-      email:      form.email.trim(),
-      phone:      form.phone.trim() || null,
+    const { error: authErr } = await supabase.auth.signInWithOtp({
+      email: form.email.trim(),
+      options: {
+        emailRedirectTo: window.location.origin,
+        // Stored in auth.users.raw_user_meta_data — App.jsx reads this on sign-in
+        data: {
+          first_name: form.firstName.trim(),
+          last_name:  form.lastName.trim(),
+          phone:      form.phone.trim() || null,
+          guest_id:   guestId,
+        },
+      },
     })
 
-    if (dbErr) {
-      // Duplicate guest_id means they registered on another device — treat as success
-      if (!dbErr.message?.includes('unique')) {
-        setError('Something went wrong. Please try again.')
-        setSubmitting(false)
-        return
-      }
+    if (authErr) {
+      setError('Could not send the link. Please try again.')
+      setSubmitting(false)
+      return
     }
 
-    localStorage.setItem('botaniq_registered', 'true')
-    onComplete({ firstName: form.firstName.trim() })
+    setLinkSent(true)
+    setSubmitting(false)
   }
 
   const handleSkip = () => {
@@ -49,22 +53,47 @@ export default function RegisterModal({ onComplete, onSkip }) {
     onSkip()
   }
 
+  // ── "Check your inbox" state ─────────────────────────────────────────────
+  if (linkSent) {
+    return (
+      <div style={styles.overlay}>
+        <div style={styles.card}>
+          <div style={styles.inboxIcon}>📬</div>
+          <h2 style={styles.heading}>Check your inbox</h2>
+          <p style={styles.sub}>
+            We've sent a sign-in link to <strong>{form.email.trim()}</strong>.
+            Click the link in the email to save your garden and access it from any device.
+          </p>
+          <p style={styles.hint}>
+            No email? Check your spam folder, or{' '}
+            <button style={styles.resendBtn} onClick={() => { setLinkSent(false); setError(null) }}>
+              try a different email
+            </button>
+            .
+          </p>
+          <button style={styles.skip} onClick={handleSkip}>
+            Skip for now — I'll check later
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Registration form ────────────────────────────────────────────────────
   return (
     <div style={styles.overlay}>
       <div style={styles.card}>
-        {/* Header badge */}
         <div style={styles.badge}>
           <span style={styles.badgeLeaf}>🌿</span>
           <span style={styles.badgeText}>BotanIQ</span>
         </div>
 
-        <h2 style={styles.heading}>Welcome to BotanIQ</h2>
+        <h2 style={styles.heading}>Save your garden</h2>
         <p style={styles.sub}>
-          Save your plant garden and let us reach out if you ever need support.
-          No password, no spam — just your name and email.
+          We'll send a sign-in link to your email — no password needed.
+          Your plants will sync across all your devices.
         </p>
 
-        {/* Name row */}
         <div style={styles.row}>
           <div style={styles.field}>
             <label style={styles.label}>First name <span style={styles.req}>*</span></label>
@@ -90,7 +119,6 @@ export default function RegisterModal({ onComplete, onSkip }) {
           </div>
         </div>
 
-        {/* Email */}
         <div style={{ ...styles.field, marginBottom: '14px' }}>
           <label style={styles.label}>Email <span style={styles.req}>*</span></label>
           <input
@@ -103,7 +131,6 @@ export default function RegisterModal({ onComplete, onSkip }) {
           />
         </div>
 
-        {/* Phone */}
         <div style={{ ...styles.field, marginBottom: '20px' }}>
           <label style={styles.label}>Phone <span style={styles.optional}>(optional)</span></label>
           <input
@@ -120,10 +147,10 @@ export default function RegisterModal({ onComplete, onSkip }) {
 
         <button
           style={{ ...styles.cta, ...(submitting ? styles.ctaBusy : {}) }}
-          onClick={handleSubmit}
+          onClick={sendMagicLink}
           disabled={submitting}
         >
-          {submitting ? 'Saving…' : 'Join BotanIQ'}
+          {submitting ? 'Sending…' : 'Send sign-in link'}
         </button>
 
         <button style={styles.skip} onClick={handleSkip}>
@@ -157,6 +184,13 @@ const styles = {
     animation: 'fadeUp 0.3s ease both',
   },
 
+  inboxIcon: {
+    fontSize: '52px',
+    marginBottom: '16px',
+    display: 'block',
+    textAlign: 'center',
+  },
+
   badge: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -188,6 +222,22 @@ const styles = {
     color: 'var(--text-3)',
     lineHeight: '1.6',
     marginBottom: '24px',
+  },
+  hint: {
+    fontSize: '13px',
+    color: 'var(--text-4)',
+    lineHeight: '1.6',
+    marginBottom: '24px',
+    textAlign: 'center',
+  },
+  resendBtn: {
+    background: 'none',
+    border: 'none',
+    color: 'var(--leaf)',
+    fontSize: '13px',
+    cursor: 'pointer',
+    padding: 0,
+    textDecoration: 'underline',
   },
 
   row: {
