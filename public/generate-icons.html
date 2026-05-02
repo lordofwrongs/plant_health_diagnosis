@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>BotanIQ — Generate Icons</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; background: #f0fdf4; color: #1B4332;
+           display: flex; flex-direction: column; align-items: center; padding: 60px 24px; gap: 24px; }
+    h2   { margin: 0; }
+    p    { color: #52B788; margin: 0; font-size: 15px; }
+    .row { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; justify-content: center; }
+    canvas { border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
+    button { background: #1B4332; color: #fff; border: none; padding: 12px 24px;
+             border-radius: 999px; font-size: 14px; font-weight: 700; cursor: pointer; }
+    button:hover { background: #2d6a4f; }
+  </style>
+</head>
+<body>
+  <h2>🌿 BotanIQ Icon Generator</h2>
+  <p>Click the buttons below to download the two PNG icons needed for the PWA manifest.</p>
+
+  <div class="row">
+    <div style="text-align:center">
+      <canvas id="c192" width="192" height="192"></canvas>
+      <br/><br/>
+      <button onclick="download('c192','icon-192.png')">Download icon-192.png</button>
+    </div>
+    <div style="text-align:center">
+      <canvas id="c512" width="512" height="512"></canvas>
+      <br/><br/>
+      <button onclick="download('c512','icon-512.png')">Download icon-512.png</button>
+    </div>
+  </div>
+
+  <p style="font-size:12px;color:#888;margin-top:8px">
+    After downloading, place both files in your <code>public/</code> folder, then re-deploy.
+  </p>
+
+  <script>
+    function drawIcon(canvas) {
+      const s = canvas.width
+      const ctx = canvas.getContext('2d')
+      const r = s * 0.18  // corner radius for rounded square
+
+      // Rounded square background
+      ctx.beginPath()
+      ctx.moveTo(r, 0)
+      ctx.lineTo(s - r, 0)
+      ctx.quadraticCurveTo(s, 0, s, r)
+      ctx.lineTo(s, s - r)
+      ctx.quadraticCurveTo(s, s, s - r, s)
+      ctx.lineTo(r, s)
+      ctx.quadraticCurveTo(0, s, 0, s - r)
+      ctx.lineTo(0, r)
+      ctx.quadraticCurveTo(0, 0, r, 0)
+      ctx.closePath()
+      ctx.fillStyle = '#1B4332'
+      ctx.fill()
+
+      const cx = s / 2, cy = s / 2, sc = s / 512
+
+      // Leaf body
+      ctx.beginPath()
+      ctx.moveTo(256 * sc, 420 * sc)
+      ctx.bezierCurveTo(172 * sc, 420 * sc, 104 * sc, 340 * sc, 104 * sc, 256 * sc)
+      ctx.bezierCurveTo(104 * sc, 256 * sc, 192 * sc, 154 * sc, 320 * sc, 186 * sc)
+      ctx.bezierCurveTo(346 * sc, 250 * sc, 320 * sc, 346 * sc, 256 * sc, 420 * sc)
+      ctx.closePath()
+      ctx.fillStyle = '#52B788'
+      ctx.fill()
+
+      // Stem
+      ctx.beginPath()
+      ctx.moveTo(256 * sc, 420 * sc)
+      ctx.bezierCurveTo(256 * sc, 420 * sc, 218 * sc, 346 * sc, 244 * sc, 263 * sc)
+      ctx.strokeStyle = '#95D5B2'
+      ctx.lineWidth = 14 * sc
+      ctx.lineCap = 'round'
+      ctx.stroke()
+
+      // Highlight circle
+      ctx.beginPath()
+      ctx.arc(346 * sc, 166 * sc, 28 * sc, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(149,213,178,0.65)'
+      ctx.fill()
+    }
+
+    function download(canvasId, filename) {
+      const canvas = document.getElementById(canvasId)
+      const a = document.createElement('a')
+      a.download = filename
+      a.href = canvas.toDataURL('image/png')
+      a.click()
+    }
+
+    drawIcon(document.getElementById('c192'))
+    drawIcon(document.getElementById('c512'))
+  </script>
+</body>
+</html>
