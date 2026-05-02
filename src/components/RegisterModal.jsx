@@ -27,7 +27,7 @@ export default function RegisterModal({ onComplete, onSkip }) {
     const { error: authErr } = await supabase.auth.signInWithOtp({
       email: form.email.trim(),
       options: {
-        emailRedirectTo: window.location.origin,
+        emailRedirectTo: import.meta.env.VITE_APP_URL || window.location.origin,
         // Stored in auth.users.raw_user_meta_data — App.jsx reads this on sign-in
         data: {
           first_name: form.firstName.trim(),

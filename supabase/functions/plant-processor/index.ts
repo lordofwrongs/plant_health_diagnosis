@@ -279,9 +279,16 @@ function getRegionalContext(locationName: string): string {
       `tomato (Solanum lycopersicum), chilli/mirchi (Capsicum annuum), ` +
       `okra/bhindi (Abelmoschus esculentus), moringa/drumstick (Moringa oleifera), ` +
       `curry leaf (Murraya koenigii). ` +
-      `IMPORTANT: Cucurbit seedlings (snake gourd, ridge gourd, bitter gourd, bottle gourd, cucumber, muskmelon) ` +
-      `look nearly identical at early stages — carefully examine petiole attachment point, ` +
-      `leaf lobe depth, stem cross-section, and tendril position to distinguish between them.`
+      `IMPORTANT: Cucurbit seedlings look nearly identical at early stages. ` +
+      `Use these specific clues to distinguish them:\n` +
+      `• Ridge gourd/Luffa: leaves rough like sandpaper on both sides; deep angular lobes; stem hairy and angular.\n` +
+      `• Bitter gourd/Karela: very deeply cut, jagged irregular lobes — almost fig-leaf or feathery shape.\n` +
+      `• Bottle gourd/Lauki: large soft heart-shaped leaves, very shallow lobing, round hairy stem.\n` +
+      `• Cucumber/Kakdi: broadly 3-5 lobed, middle lobe longest; leaf slightly wider than long; fine surface hairs.\n` +
+      `• Cantaloupe/Muskmelon: similar to cucumber but leaf outline more rounded with shallower sinuses; ` +
+      `petiole attachment slightly indented at the base.\n` +
+      `• Snake gourd: first true leaves narrower with pointed lobes; stem often purplish near base.\n` +
+      `If multiple plants are visible, analyse the LARGEST/most prominent plant in the frame.`
   }
 
   const isSEA = [
@@ -447,18 +454,23 @@ serve(async (req: Request) => {
         `DO NOT re-identify. Set independent_id and final_scientific_name to this confirmed species, ` +
         `and agrees_with_specialist to true. Focus on health analysis and regional context.`
     } else if (useCrossValidate) {
-      const altStr = plantNet!.topCandidates.slice(1).map((c: { name: string; score: number }) => `${c.name} (${c.score}%)`).join(', ')
+      const allCandidates = plantNet!.topCandidates
+        .map((c: { name: string; common: string; score: number }, i: number) => `${i + 1}. ${c.name} (${c.common || '—'}) — ${c.score}%`)
+        .join('\n')
       identSection =
-        `CROSS-VALIDATION TASK — follow these steps in order:\n` +
-        `Step 1 — YOUR INDEPENDENT ID: Look carefully at leaf shape, how the petiole attaches ` +
-        `(at leaf base vs. center of leaf), leaf texture, venation pattern, stem type, and growth habit. ` +
-        `Based ONLY on these visual features, name the plant. Set independent_id to your answer.\n` +
-        `Step 2 — SPECIALIST CHECK: PlantNet (trained on millions of herbarium specimens) says ` +
-        `"${plantNet!.scientificName}" (${plantNet!.commonName}) at ${plantNet!.score}%. ` +
-        `Alternatives: ${altStr || 'none'}.\n` +
-        `Step 3 — RECONCILE: If your Step 1 answer matches PlantNet → set agrees_with_specialist=true ` +
-        `and final_scientific_name to that species. If they differ → set agrees_with_specialist=false ` +
-        `and final_scientific_name to YOUR Step 1 identification (you know something PlantNet missed).`
+        `CROSS-VALIDATION TASK — follow these three steps strictly in order:\n\n` +
+        `Step 1 — YOUR INDEPENDENT ID (complete this before reading the candidates below):\n` +
+        `Look ONLY at the visual evidence in the photo: leaf shape and lobe depth, how the petiole ` +
+        `attaches (at the leaf base vs. the center), leaf texture (rough/smooth/hairy), venation ` +
+        `pattern, stem cross-section, and overall growth habit. Based purely on what you see, ` +
+        `commit to a species name. Set independent_id to YOUR answer. ` +
+        `Do NOT be anchored by the specialist candidates listed below — your visual read matters.\n\n` +
+        `Step 2 — SPECIALIST CANDIDATES (low certainty — ${plantNet!.score}% top score — treat as hints only):\n` +
+        `${allCandidates}\n\n` +
+        `Step 3 — RECONCILE: Compare your Step 1 answer with the candidates above.\n` +
+        `If your answer matches one → set agrees_with_specialist=true and final_scientific_name to that species.\n` +
+        `If your answer differs → set agrees_with_specialist=false and final_scientific_name to YOUR Step 1 answer ` +
+        `(your visual analysis overrides a low-certainty specialist reading).`
     } else {
       const hint = plantNet
         ? `PlantNet returned a weak signal (best guess: ${plantNet.scientificName} at ${plantNet.score}%) — treat as unreliable.`

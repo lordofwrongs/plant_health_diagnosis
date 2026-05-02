@@ -17,6 +17,7 @@ export default function HistoryScreen({ onSelectResult, onRetakePhoto }) {
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(true)
   const [retrying, setRetrying] = useState({})
+  const [confirming, setConfirming] = useState({})
 
   const fetchHistory = useCallback(async () => {
     const guestId = localStorage.getItem('plant_care_guest_id')
@@ -92,6 +93,18 @@ export default function HistoryScreen({ onSelectResult, onRetakePhoto }) {
     }
   }
 
+  const handleDelete = async (e, group) => {
+    e.stopPropagation()
+    const ids = group.scans.map(s => s.id)
+    const { error } = await supabase.from('plant_logs').delete().in('id', ids)
+    if (!error) {
+      setGroups(prev => prev.filter(g => g.id !== group.id))
+      setConfirming(prev => { const n = { ...prev }; delete n[group.id]; return n })
+    } else {
+      logger.error('HistoryScreen', `Delete failed: ${error.message}`)
+    }
+  }
+
   if (loading) {
     return (
       <div style={styles.loadingPage}>
@@ -140,16 +153,17 @@ export default function HistoryScreen({ onSelectResult, onRetakePhoto }) {
             const isError    = group.latestScanStatus === 'error'
             const isQuality  = group.latestScanStatus === 'quality_issue'
             const isRetrying = retrying[group.latestScanId]
-            const isClickable = !isError && !isPending && !isQuality
+            const isClickable = !isError && !isPending && !isQuality && !confirming[group.id]
 
             return (
               <div
                 key={group.id}
                 style={{
                   ...styles.card,
-                  ...(isError   ? styles.cardError   : {}),
-                  ...(isQuality ? styles.cardQuality : {}),
-                  ...(isClickable ? styles.cardClickable : {}),
+                  ...(isError         ? styles.cardError   : {}),
+                  ...(isQuality       ? styles.cardQuality : {}),
+                  ...(isClickable     ? styles.cardClickable : {}),
+                  ...(confirming[group.id] ? styles.cardConfirming : {}),
                 }}
                 onClick={() => isClickable && onSelectResult(group.scans[0], group.scans)}
               >
@@ -165,9 +179,17 @@ export default function HistoryScreen({ onSelectResult, onRetakePhoto }) {
                 <div style={styles.content}>
                   <div style={styles.topRow}>
                     <h3 style={styles.plantName}>{group.nickname}</h3>
-                    <span style={styles.date}>
-                      {new Date(group.latestTimestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                      <span style={styles.date}>
+                        {new Date(group.latestTimestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                      </span>
+                      <button
+                        style={styles.deleteBtn}
+                        onClick={e => { e.stopPropagation(); setConfirming(prev => ({ ...prev, [group.id]: true })) }}
+                        aria-label="Remove plant from garden"
+                        title="Remove from garden"
+                      >×</button>
+                    </div>
                   </div>
                   <p style={styles.sciName}>{group.plantName}</p>
 
@@ -225,9 +247,19 @@ export default function HistoryScreen({ onSelectResult, onRetakePhoto }) {
                       })()}
                     </>
                   )}
+
+                  {confirming[group.id] && (
+                    <div style={styles.confirmRow} onClick={e => e.stopPropagation()}>
+                      <p style={styles.confirmText}>Remove this plant from your garden?</p>
+                      <div style={styles.confirmBtns}>
+                        <button style={styles.confirmYes} onClick={e => handleDelete(e, group)}>Yes, remove</button>
+                        <button style={styles.confirmNo} onClick={e => { e.stopPropagation(); setConfirming(prev => ({ ...prev, [group.id]: false })) }}>Keep</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {isClickable && <span style={styles.chevron}>›</span>}
+                {isClickable && !confirming[group.id] && <span style={styles.chevron}>›</span>}
               </div>
             )
           })}
@@ -402,6 +434,60 @@ const styles = {
     fontWeight: '300',
     marginLeft: '4px',
     flexShrink: 0,
+  },
+
+  deleteBtn: {
+    background: 'none',
+    border: 'none',
+    color: 'var(--text-4)',
+    fontSize: '16px',
+    fontWeight: '400',
+    cursor: 'pointer',
+    padding: '2px 5px',
+    borderRadius: 'var(--r-sm)',
+    lineHeight: 1,
+    transition: 'color 0.15s, background 0.15s',
+  },
+  cardConfirming: {
+    border: '1px solid #FECACA',
+    background: '#FFF8F8',
+  },
+  confirmRow: {
+    marginTop: '10px',
+    padding: '10px 12px',
+    background: '#FFF0F0',
+    border: '1px solid #FECACA',
+    borderRadius: 'var(--r-sm)',
+  },
+  confirmText: {
+    fontSize: '12px',
+    color: '#C62828',
+    fontWeight: '600',
+    margin: '0 0 8px',
+  },
+  confirmBtns: {
+    display: 'flex',
+    gap: '8px',
+  },
+  confirmYes: {
+    padding: '6px 14px',
+    background: '#DC2626',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 'var(--r-full)',
+    fontSize: '12px',
+    fontWeight: '700',
+    cursor: 'pointer',
+  },
+  confirmNo: {
+    padding: '6px 14px',
+    background: 'var(--mist)',
+    color: 'var(--text-2)',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--r-full)',
+    fontSize: '12px',
+    fontWeight: '600',
+    cursor: 'pointer',
   },
 
   // Empty state
