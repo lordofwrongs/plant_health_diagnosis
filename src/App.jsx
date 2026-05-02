@@ -25,6 +25,7 @@ export default function App() {
   const [historyContext, setHistoryContext] = useState([])
 
   const [showRegisterModal, setShowRegisterModal] = useState(false)
+  const [showCelebration, setShowCelebration] = useState(false)
 
   const [preferences, setPreferences] = useState(() => {
     const saved = localStorage.getItem('plant_care_prefs')
@@ -106,7 +107,17 @@ export default function App() {
     setResult(data)
     setHistoryContext([])
     setScreen('results')
-    if (!localStorage.getItem('botaniq_registered')) {
+
+    const isFirst = !localStorage.getItem('botaniq_first_scan')
+    if (isFirst) {
+      localStorage.setItem('botaniq_first_scan', 'done')
+      setShowCelebration(true)
+      // Show celebration for 2.5s then show register modal if not yet registered
+      setTimeout(() => {
+        setShowCelebration(false)
+        if (!localStorage.getItem('botaniq_registered')) setShowRegisterModal(true)
+      }, 2500)
+    } else if (!localStorage.getItem('botaniq_registered')) {
       setShowRegisterModal(true)
     }
   }
@@ -183,6 +194,24 @@ export default function App() {
           )}
         </div>
       </nav>
+
+      {/* ── First-scan celebration ──────────────────────────── */}
+      {showCelebration && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 600,
+          background: 'rgba(10,31,20,0.72)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          animation: 'fadeUp 0.4s ease both',
+        }}>
+          <div style={{ textAlign: 'center', color: '#fff', padding: '24px' }}>
+            <div style={{ fontSize: '64px', marginBottom: '16px', animation: 'leafSway 1s ease-in-out infinite' }}>🌿</div>
+            <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: '28px', fontWeight: '700', marginBottom: '10px' }}>
+              Welcome to your garden!
+            </h2>
+            <p style={{ fontSize: '16px', opacity: 0.8 }}>Your first plant has been analysed and saved.</p>
+          </div>
+        </div>
+      )}
 
       {/* ── Registration modal ──────────────────────────────── */}
       {showRegisterModal && (

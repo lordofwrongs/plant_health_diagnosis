@@ -112,9 +112,26 @@ export default function HistoryScreen({ onSelectResult, onRetakePhoto }) {
 
       {groups.length === 0 ? (
         <div className="fade-up-delay-1" style={styles.emptyState}>
-          <div style={styles.emptyIcon}>🌱</div>
+          {/* Sample plant card to show what a scan looks like */}
+          <div style={styles.sampleCard}>
+            <div style={styles.sampleThumb}>🌿</div>
+            <div style={styles.sampleContent}>
+              <p style={styles.sampleName}>Snake Gourd</p>
+              <p style={styles.sampleSci}>Trichosanthes cucumerina</p>
+              <div style={styles.statusRow}>
+                <span style={{ ...styles.dot, background: '#4CAF50' }} />
+                <span style={{ ...styles.statusLabel, color: '#4CAF50' }}>Healthy</span>
+              </div>
+            </div>
+            <span style={styles.sampleBadge}>Example</span>
+          </div>
           <h3 style={styles.emptyTitle}>Your garden awaits</h3>
-          <p style={styles.emptyText}>Scan your first plant to start tracking its health over time.</p>
+          <p style={styles.emptyText}>
+            Scan any plant to identify it, diagnose its health, and get a personalised care plan.
+          </p>
+          <button style={styles.emptyAction} onClick={onRetakePhoto}>
+            🌿 Scan your first plant
+          </button>
         </div>
       ) : (
         <div className="fade-up-delay-1" style={styles.list}>
@@ -189,10 +206,24 @@ export default function HistoryScreen({ onSelectResult, onRetakePhoto }) {
                   )}
 
                   {!isPending && !isError && !isQuality && (
-                    <div style={styles.statusRow}>
-                      <span style={{ ...styles.dot, background: group.latestHealthColor || 'var(--leaf)' }} />
-                      <span style={styles.statusLabel}>{group.latestStatus || 'Processing...'}</span>
-                    </div>
+                    <>
+                      <div style={styles.statusRow}>
+                        <span style={{ ...styles.dot, background: group.latestHealthColor || 'var(--leaf)' }} />
+                        <span style={styles.statusLabel}>{group.latestStatus || 'Processing...'}</span>
+                      </div>
+                      {(() => {
+                        const sched = group.latestScanData?.care_schedule
+                        if (!sched?.water_every_days) return null
+                        const next = new Date(group.latestTimestamp).getTime() + sched.water_every_days * 86400000
+                        const days = Math.ceil((next - Date.now()) / 86400000)
+                        const label = days <= 0 ? 'Water today' : days === 1 ? 'Water tomorrow' : `Water in ${days}d`
+                        return (
+                          <span style={{ ...styles.careBadge, ...(days <= 0 ? styles.careBadgeUrgent : {}) }}>
+                            💧 {label}
+                          </span>
+                        )
+                      })()}
+                    </>
                   )}
                 </div>
 
@@ -371,5 +402,75 @@ const styles = {
     fontWeight: '300',
     marginLeft: '4px',
     flexShrink: 0,
+  },
+
+  // Empty state
+  sampleCard: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '14px',
+    background: 'var(--card)',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--r-lg)',
+    padding: '14px 16px',
+    marginBottom: '24px',
+    width: '100%',
+    position: 'relative',
+    opacity: 0.75,
+  },
+  sampleThumb: {
+    fontSize: '36px',
+    width: '56px',
+    height: '56px',
+    background: 'rgba(82,183,136,0.12)',
+    borderRadius: 'var(--r-md)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  sampleContent: { flex: 1, minWidth: 0 },
+  sampleName: { fontSize: '15px', fontWeight: '700', color: 'var(--text-1)', margin: 0, marginBottom: '2px' },
+  sampleSci:  { fontSize: '12px', color: 'var(--text-3)', fontStyle: 'italic', margin: 0, marginBottom: '6px' },
+  sampleBadge: {
+    position: 'absolute',
+    top: '10px',
+    right: '12px',
+    fontSize: '9px',
+    fontWeight: '800',
+    color: 'var(--mid)',
+    background: 'var(--sage)',
+    borderRadius: 'var(--r-full)',
+    padding: '2px 8px',
+    letterSpacing: '0.5px',
+    textTransform: 'uppercase',
+  },
+  emptyAction: {
+    marginTop: '20px',
+    padding: '14px 28px',
+    background: 'var(--primary)',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 'var(--r-full)',
+    fontSize: '14px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    boxShadow: '0 4px 16px rgba(27,67,50,0.2)',
+  },
+
+  // Care schedule badge on cards
+  careBadge: {
+    display: 'inline-block',
+    marginTop: '6px',
+    fontSize: '11px',
+    fontWeight: '600',
+    color: '#0369a1',
+    background: '#e0f2fe',
+    borderRadius: 'var(--r-full)',
+    padding: '2px 9px',
+  },
+  careBadgeUrgent: {
+    color: '#92400e',
+    background: '#fef3c7',
   },
 }

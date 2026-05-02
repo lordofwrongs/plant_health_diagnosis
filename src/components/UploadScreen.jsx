@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { supabase } from '../supabaseClient.js'
 import { logger } from '../logger.js'
 
@@ -14,6 +14,14 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
   const [dragOver, setDragOver] = useState(false)
   const inputRef = useRef()
   const isProcessing = useRef(false)
+  const [totalScans, setTotalScans] = useState(null)
+  const [guideOpen, setGuideOpen] = useState(false)
+
+  useEffect(() => {
+    supabase.rpc('get_total_scans').then(({ data }) => {
+      if (data != null) setTotalScans(Number(data))
+    })
+  }, [])
 
   const handleFiles = (fileList) => {
     const all = Array.from(fileList)
@@ -226,10 +234,30 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
           onChange={(e) => handleFiles(e.target.files)}
         />
 
-        {/* Photo tip */}
-        <div style={styles.tipRow}>
-          <span style={styles.tipIcon}>💡</span>
-          <span style={styles.tipText}>Best results: side angle at leaf level · include a leaf close-up · avoid top-down shots</span>
+        {/* Photo guide */}
+        <div style={styles.photoGuide}>
+          <button style={styles.photoGuideHeader} onClick={() => setGuideOpen(o => !o)}>
+            <span style={styles.tipIcon}>📷</span>
+            <span style={styles.photoGuideTitle}>How to get the best result</span>
+            <span style={styles.photoGuideChev}>{guideOpen ? '▲' : '▼'}</span>
+          </button>
+          {guideOpen && (
+            <div style={styles.photoGuideBody}>
+              {[
+                { n: 1, title: 'Side angle at leaf level', hint: 'Shows how leaves attach to the stem — the key to accurate identification' },
+                { n: 2, title: 'Close-up of one leaf', hint: 'Fill the frame with texture, colour, and edge detail' },
+                { n: 3, title: 'Stem and soil base', hint: 'Reveals growth habit — especially useful for seedlings' },
+              ].map(({ n, title, hint }) => (
+                <div key={n} style={styles.photoStep}>
+                  <div style={styles.photoStepNum}>{n}</div>
+                  <div>
+                    <p style={styles.photoStepTitle}>{title}</p>
+                    <p style={styles.photoStepHint}>{hint}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Nickname */}
@@ -273,7 +301,12 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
 
       {/* Trust bar */}
       <div className="fade-up-delay-2" style={styles.trustBar}>
-        {['🌿 PlantNet botanical database', '🤖 Gemini AI analysis', '📍 Local weather context'].map(item => (
+        {totalScans != null && (
+          <span style={{ ...styles.trustItem, ...styles.trustItemCount }}>
+            🌿 {totalScans.toLocaleString()} plants analysed
+          </span>
+        )}
+        {['🤖 Gemini AI analysis', '🔬 PlantNet botanical ID', '📍 Local weather context'].map(item => (
           <span key={item} style={styles.trustItem}>{item}</span>
         ))}
       </div>
@@ -535,6 +568,55 @@ const styles = {
     borderRadius: 'var(--r-full)',
     padding: '5px 12px',
   },
+  trustItemCount: {
+    fontWeight: '700',
+    color: 'var(--leaf)',
+    borderColor: 'rgba(82,183,136,0.4)',
+    background: 'rgba(82,183,136,0.08)',
+  },
+
+  photoGuide: {
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--r-sm)',
+    marginBottom: '20px',
+    overflow: 'hidden',
+    background: 'var(--mist)',
+  },
+  photoGuideHeader: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '10px 12px',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    textAlign: 'left',
+  },
+  photoGuideTitle: {
+    flex: 1,
+    fontSize: '12px',
+    fontWeight: '600',
+    color: 'var(--text-2)',
+  },
+  photoGuideChev: { fontSize: '10px', color: 'var(--text-4)' },
+  photoGuideBody: {
+    borderTop: '1px solid var(--border)',
+    padding: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+  photoStep: { display: 'flex', gap: '12px', alignItems: 'flex-start' },
+  photoStepNum: {
+    width: '20px', height: '20px', borderRadius: '50%',
+    background: 'var(--primary)', color: '#fff',
+    fontSize: '10px', fontWeight: '800',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    flexShrink: 0, marginTop: '1px',
+  },
+  photoStepTitle: { fontSize: '12px', fontWeight: '600', color: 'var(--text-1)', margin: 0, marginBottom: '2px' },
+  photoStepHint:  { fontSize: '11px', color: 'var(--text-3)', margin: 0, lineHeight: '1.4' },
 }
 
 function CameraIcon() {

@@ -478,6 +478,7 @@ STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
 7. weather_alert: Only if weather data indicates genuine risk. Otherwise null.
 8. CARE STEPS: Make each step concrete and actionable. Factor current weather conditions into recommendations — if rainfall has been low, emphasise watering frequency or mulching; if peak temperatures are high, advise on shade cloth or watering timing; if rain has been heavy, flag drainage and fungal risk. When recommending fertilisers, sprays, or soil treatments, name the product TYPE (e.g. "liquid seaweed fertiliser", "balanced granular fertiliser (NPK)", "neem oil spray", "compost or well-rotted manure"). Never mention specific brand names.
 9. PRO TIP: A single practical tip combining the plant's current needs with the actual weather forecast — reference rain and temperature data specifically. Only name the location if it is known and confirmed.
+10. CARE SCHEDULE: Generate realistic care frequencies for this specific plant. Factor rainfall into water_every_days — reduce the interval if the past 7-day rain was < 5mm; increase it if > 20mm. notes is optional: one concise sentence for a care tip not already in recovery_steps, or null.
 
 RESPOND WITH THIS EXACT JSON (no markdown fences):
 {
@@ -500,7 +501,13 @@ RESPOND WITH THIS EXACT JSON (no markdown fences):
   "analysis": "Plain-language health assessment in ${userLang} — what you see, what it means, written warmly for a home gardener.",
   "recovery_steps": ["Concrete action in ${userLang}. Name the product type if a treatment is needed — no brand names."],
   "pro_tip": "A practical, location-specific tip for ${log.location_name !== 'Unknown Location' ? log.location_name : 'home gardeners'} in ${userLang}. Do not mention South Asia unless location confirms it.",
-  "weather_alert": null
+  "weather_alert": null,
+  "care_schedule": {
+    "water_every_days": 3,
+    "fertilise_every_days": 14,
+    "check_pests_every_days": 7,
+    "notes": null
+  }
 }`,
       imageBase64, imageMimeType, logger, 'stage2_analysis',
       0.1, 45000
@@ -578,6 +585,7 @@ RESPOND WITH THIS EXACT JSON (no markdown fences):
                               : String(result.recovery_steps ?? ''),
         ExpertTip:           result.pro_tip,
         WeatherAlert:        result.weather_alert ?? null,
+        care_schedule:       result.care_schedule ?? null,
         plantnet_candidates: plantNet?.topCandidates ?? [],
         status:              'done',
         // Store photo_tip as gentle guidance in ResultsScreen when image quality was imperfect
