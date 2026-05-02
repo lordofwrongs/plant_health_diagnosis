@@ -3,6 +3,7 @@ import UploadScreen from './components/UploadScreen.jsx'
 import AnalysingScreen from './components/AnalysingScreen.jsx'
 import ResultsScreen from './components/ResultsScreen.jsx'
 import HistoryScreen from './components/HistoryScreen.jsx'
+import PlantDetailScreen from './components/PlantDetailScreen.jsx'
 import RegisterModal from './components/RegisterModal.jsx'
 import { supabase } from './supabaseClient.js'
 
@@ -23,6 +24,7 @@ export default function App() {
   const [activeLogId, setActiveLogId] = useState(null)
   const [result, setResult] = useState(null)
   const [historyContext, setHistoryContext] = useState([])
+  const [selectedGroup, setSelectedGroup] = useState(null)
 
   const [showRegisterModal, setShowRegisterModal] = useState(false)
   const [showCelebration, setShowCelebration] = useState(false)
@@ -126,6 +128,7 @@ export default function App() {
     setActiveLogId(null)
     setResult(null)
     setHistoryContext([])
+    setSelectedGroup(null)
     setScreen('upload')
   }
 
@@ -158,10 +161,10 @@ export default function App() {
           </button>
           <button
             onClick={() => setScreen('history')}
-            style={{ ...styles.navTab, ...(screen === 'history' || screen === 'results' ? styles.navTabActive : {}) }}
+            style={{ ...styles.navTab, ...(screen === 'history' || screen === 'results' || screen === 'plant_detail' ? styles.navTabActive : {}) }}
           >
             Garden
-            {(screen === 'history' || screen === 'results') && <span style={styles.tabDot} />}
+            {(screen === 'history' || screen === 'results' || screen === 'plant_detail') && <span style={styles.tabDot} />}
           </button>
         </div>
 
@@ -236,7 +239,7 @@ export default function App() {
             result={result}
             userLanguage={preferences.language}
             onReset={handleReset}
-            onBack={() => setScreen('history')}
+            onBack={() => setScreen(selectedGroup ? 'plant_detail' : 'history')}
             allScans={historyContext}
             onSelectScan={(scan) => setResult(scan)}
           />
@@ -244,12 +247,28 @@ export default function App() {
 
         {screen === 'history' && (
           <HistoryScreen
-            onSelectResult={(data, fullHistory) => {
-              setResult(data)
-              setHistoryContext(fullHistory)
+            onSelectPlant={(group) => {
+              setSelectedGroup(group)
+              setScreen('plant_detail')
+            }}
+            onRetakePhoto={handleReset}
+          />
+        )}
+
+        {screen === 'plant_detail' && selectedGroup && (
+          <PlantDetailScreen
+            group={selectedGroup}
+            onBack={() => setScreen('history')}
+            onSelectScan={(scan, allScans) => {
+              setResult(scan)
+              setHistoryContext(allScans)
               setScreen('results')
             }}
             onRetakePhoto={handleReset}
+            onGroupDeleted={() => {
+              setSelectedGroup(null)
+              setScreen('history')
+            }}
           />
         )}
       </main>
