@@ -333,7 +333,6 @@ serve(async (req: Request) => {
 
     // -----------------------------------------------------------------------
     // Image fetch — ONCE, reused for both Gemini (base64) and PlantNet (bytes)
-    // Doing this before Stage 1 so we have bytes ready for parallel Stage 2
     // -----------------------------------------------------------------------
     logger.startTimer('image_fetch')
     const imgRes = await fetchWithTimeout(image_url, {}, 20000)
@@ -346,74 +345,21 @@ serve(async (req: Request) => {
     logger.info('image_fetch', `Size: ${(imageBytes.length / 1024).toFixed(0)}KB, type: ${imageMimeType}`)
 
     // -----------------------------------------------------------------------
-    // STAGE 1 — Smart Quality Gate (Gemini)
+    // STAGE 1 — Parallel: PlantNet ID + History + Weather
     //
-    // Philosophy: HARD REJECT only when truly unanalyzable (no plant visible,
-    // pitch black, extreme blur with zero features). For imperfect but usable
-    // photos (top-down, far away, low light) — proceed AND store a photo_tip.
-    // This keeps the app helpful while guiding users toward better photos.
+    // PlantNet runs BEFORE the Gemini call with 'leaf' as the default organ —
+    // correct for seedlings and young plants (the hard identification cases).
+    // This eliminates the old Stage 1 quality gate as a blocking serial step,
+    // saving ~4s by moving all pre-Gemini work into a single parallel stage.
     // -----------------------------------------------------------------------
-    logger.startTimer('stage1_quality')
-    const quality = await callGemini(
-      GEMINI_KEY,
-      'You are a quality gate for a plant health analysis app. Respond with valid JSON only.',
-      `Evaluate whether this image can produce a reliable plant identification.
-
-HARD REJECT (is_analyzable = false) ONLY when:
-- No plant is visible at all (photo of floor, ceiling, random objects, just a hand)
-- Image is completely black, completely white, or so blurry that ZERO features are discernible
-
-PROCEED (is_analyzable = true) for everything else, including:
-- Top-down angle, plant at a distance, partial view, slightly blurry, low light, just leaves/stems
-
-When proceeding, set photo_tip to a short actionable suggestion IF a different angle or distance
-would meaningfully improve accuracy. Otherwise set photo_tip to null.
-
-Common tips (use the most relevant one, or null if photo is already good):
-- Top-down shot: "Shoot from the side at leaf level to show how the stem meets the leaf"
-- Plant too far: "Move closer so individual leaves fill most of the frame"
-- Dark lighting: "Take the photo in natural daylight for accurate leaf color analysis"
-- Only pot/soil visible: "Focus on the leaves and stem rather than the whole pot"
-
-organ: Identify the PRIMARY plant part visible.
-- "leaf" — DEFAULT. Use for seedlings, young plants, or any image where leaves/stems dominate.
-- "flower" — ONLY if a flower is unmistakably the main subject (petals, stamens clearly visible).
-- "fruit" — ONLY if a fruit/vegetable is unmistakably the main subject.
-- "bark" — ONLY if bark or trunk texture is the main subject.
-- "habit" — ONLY if the whole plant from a distance is the main subject with no close-up detail.
-When in doubt, use "leaf".
-
-Respond ONLY with JSON: { "is_analyzable": boolean, "photo_tip": string | null, "organ": "leaf" | "flower" | "fruit" | "bark" | "habit" }`,
-      imageBase64, imageMimeType, logger, 'stage1_quality',
-      0,     // temperature 0 — deterministic gate decision
-      20000
-    ) as { is_analyzable: boolean; photo_tip: string | null; organ: string }
-    logger.endTimer('stage1_quality')
-    const detectedOrgan = quality.organ || 'leaf'
-    logger.info('stage1_quality', `is_analyzable=${quality.is_analyzable}, organ=${detectedOrgan}, tip=${quality.photo_tip}`)
-
-    if (!quality.is_analyzable) {
-      const tip = quality.photo_tip ?? 'Please take a clear photo of the plant with good lighting.'
-      await supabase.from('plant_logs').update({
-        status: 'quality_issue',
-        error_details: tip,
-        processing_log: logger.getLog(),
-      }).eq('id', record_id)
-      return new Response(JSON.stringify({ success: false, quality_issue: true, tip }))
-    }
-
-    // -----------------------------------------------------------------------
-    // STAGE 2 — Parallel: PlantNet ID + History + Weather
-    // All three run simultaneously — no extra wall-clock time vs sequential
-    // -----------------------------------------------------------------------
-    logger.startTimer('stage2_parallel')
+    logger.startTimer('stage1_parallel')
     const threshold = 0.0001
 
     const [plantNet, nearbyResult, weatherSnippet] = await Promise.all([
-      // 2a. PlantNet specialized identification — organ detected by quality gate
-      identifyWithPlantNet(PLANTNET_KEY, imageBytes, imageMimeType, detectedOrgan, logger),
+      // 1a. PlantNet — 'leaf' covers seedlings/young plants (the common case)
+      identifyWithPlantNet(PLANTNET_KEY, imageBytes, imageMimeType, 'leaf', logger),
 
-      // 2b. Previous scan history for this plant/location
+      // 1b. Previous scan history for this plant/location
       supabase
         .from('plant_logs')
         .select('VisualAnalysis, HealthStatus, PlantName, created_at')
@@ -424,11 +370,11 @@ Respond ONLY with JSON: { "is_analyzable": boolean, "photo_tip": string | null, 
         .order('created_at', { ascending: false })
         .limit(1),
 
-      // 2c. Weather context
+      // 1c. Weather context
       fetchWeather(log.latitude, log.longitude, logger),
     ])
 
-    logger.endTimer('stage2_parallel')
+    logger.endTimer('stage1_parallel')
 
     // Build history context
     let historyContext = 'First-time scan for this plant.'
@@ -439,34 +385,31 @@ Respond ONLY with JSON: { "is_analyzable": boolean, "photo_tip": string | null, 
     }
 
     const plantNetConfidence = plantNet?.score ?? 0
-    logger.info('stage2_parallel', `PlantNet: ${plantNet ? `${plantNet.scientificName} ${plantNet.score}%` : 'no result'}`)
+    logger.info('stage1_parallel', `PlantNet: ${plantNet ? `${plantNet.scientificName} ${plantNet.score}%` : 'no result'}`)
 
     // -----------------------------------------------------------------------
-    // STAGE 3 — Two-step identification then health analysis
+    // STAGE 2 — Merged Gemini call
     //
-    // Key insight: when PlantNet score is < 85%, Gemini must identify the plant
-    // INDEPENDENTLY first (no PlantNet hint), then we reconcile. This prevents
-    // PlantNet's wrong guess from anchoring Gemini's identification.
+    // A single Gemini call now handles:
+    //   a) Quality gate — is_analyzable, photo_tip, organ detection
+    //   b) Plant identification — independent ID + PlantNet cross-validation
+    //   c) Health analysis and care recommendations
     //
-    // Confidence is COMPUTED from the agreement signal, never self-reported.
+    // If is_analyzable = false, we exit early after this single call.
     // -----------------------------------------------------------------------
-    logger.startTimer('stage3_analysis')
+    logger.startTimer('stage2_analysis')
 
-    // Decide the identification strategy based on PlantNet confidence
-    const useGroundTruth  = plantNet !== null && plantNet.score >= 85
+    const useGroundTruth   = plantNet !== null && plantNet.score >= 85
     const useCrossValidate = plantNet !== null && plantNet.score >= 20 && plantNet.score < 85
 
-    // Build the identification section of the prompt
     let identSection: string
     if (useGroundTruth) {
-      // PlantNet is very confident — accept it, focus entirely on health
       identSection =
         `SPECIES CONFIRMED (PlantNet ${plantNet!.score}% confidence): ` +
         `"${plantNet!.scientificName}" (${plantNet!.commonName}, family ${plantNet!.family}). ` +
         `DO NOT re-identify. Set independent_id and final_scientific_name to this confirmed species, ` +
         `and agrees_with_specialist to true. Focus on health analysis and regional context.`
     } else if (useCrossValidate) {
-      // Medium PlantNet confidence — Gemini identifies independently first, THEN cross-checks
       const altStr = plantNet!.topCandidates.slice(1).map((c: { name: string; score: number }) => `${c.name} (${c.score}%)`).join(', ')
       identSection =
         `CROSS-VALIDATION TASK — follow these steps in order:\n` +
@@ -480,7 +423,6 @@ Respond ONLY with JSON: { "is_analyzable": boolean, "photo_tip": string | null, 
         `and final_scientific_name to that species. If they differ → set agrees_with_specialist=false ` +
         `and final_scientific_name to YOUR Step 1 identification (you know something PlantNet missed).`
     } else {
-      // Low/no PlantNet — Gemini identifies entirely on its own
       const hint = plantNet
         ? `PlantNet returned a weak signal (best guess: ${plantNet.scientificName} at ${plantNet.score}%) — treat as unreliable.`
         : `PlantNet could not identify this plant.`
@@ -500,7 +442,21 @@ Respond ONLY with JSON: { "is_analyzable": boolean, "photo_tip": string | null, 
         'Never use botanical jargon (no "ovate", "lanceolate", "pinnate venation", "pubescent", "crenate", "cordate", "petiole" etc.) — always use everyday equivalents.',
         'Always respond with valid JSON only. All keys in vernacular_names must be lowercase.',
       ].join(' '),
-      `CONTEXT:
+      `STEP 0 — IMAGE QUALITY CHECK (evaluate this before anything else):
+Determine if this image can produce a reliable plant identification.
+
+HARD REJECT (is_analyzable = false) ONLY when:
+- No plant is visible at all (photo of floor, ceiling, random objects, just a hand)
+- Image is completely black, completely white, or so blurry that ZERO features are discernible
+
+PROCEED (is_analyzable = true) for everything else: top-down angle, distance, partial view, slightly blurry, low light, just leaves/stems.
+
+photo_tip: a short actionable suggestion if a different angle would improve accuracy. Otherwise null.
+organ: "leaf" (default for seedlings/young plants), "flower" (only if clearly main subject), "fruit", "bark", "habit". When in doubt: "leaf".
+
+If is_analyzable = false, set all analysis fields to null in your JSON response.
+
+CONTEXT:
 Location: ${log.location_name}
 ${regionalContext ? `${regionalContext}\n` : ''}Weather: ${weatherSnippet}
 History: ${historyContext}
@@ -512,7 +468,7 @@ ${nickname
 
 ${identSection}
 
-YOUR TASK:
+STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
 1. IDENTIFICATION: Follow the identification strategy above precisely.
 2. HEALTH ASSESSMENT: Analyse leaf colour, turgor, spots, wilting, soil condition. Write like you are explaining to a friend who loves gardening but has no scientific background — warm, clear, jargon-free.
 3. health_category MUST be exactly one of: "healthy", "fair", or "critical" (English, always).
@@ -520,12 +476,15 @@ YOUR TASK:
 5. REGIONAL NAMES: Use traditional names used by locals — not literal translations.
 6. USER LANGUAGE: All user-facing text (except health_category) in ${userLang}.
 7. weather_alert: Only if weather data indicates genuine risk. Otherwise null.
-8. CARE STEPS: Make each step concrete and actionable. Look at the Weather context above and factor current conditions into your recommendations — if rainfall has been low, emphasise watering frequency or mulching to retain moisture; if peak temperatures are high, advise on shade cloth or watering timing; if rain has been heavy, flag drainage and fungal risk. When recommending fertilisers, sprays, or soil treatments, name the product TYPE so users know what to buy — for example: "liquid seaweed fertiliser", "balanced granular fertiliser (NPK)", "neem oil spray", "compost or well-rotted manure", "slow-release fertiliser pellets", "copper-based fungicide spray". Never mention specific brand names.
-9. PRO TIP: Write a single, practical tip that combines the plant's current needs with the actual weather forecast in the Weather context — reference the rain and temperature data specifically (e.g. "With only 0.4mm of rain this week and a peak of 24°C forecast, water deeply every other day…"). Only name the location if it is known and confirmed — never default to "South Asia" or any region that is not in the location data.
+8. CARE STEPS: Make each step concrete and actionable. Factor current weather conditions into recommendations — if rainfall has been low, emphasise watering frequency or mulching; if peak temperatures are high, advise on shade cloth or watering timing; if rain has been heavy, flag drainage and fungal risk. When recommending fertilisers, sprays, or soil treatments, name the product TYPE (e.g. "liquid seaweed fertiliser", "balanced granular fertiliser (NPK)", "neem oil spray", "compost or well-rotted manure"). Never mention specific brand names.
+9. PRO TIP: A single practical tip combining the plant's current needs with the actual weather forecast — reference rain and temperature data specifically. Only name the location if it is known and confirmed.
 
 RESPOND WITH THIS EXACT JSON (no markdown fences):
 {
-  "independent_id": "Scientific name from YOUR own visual analysis (Step 1)",
+  "is_analyzable": true,
+  "photo_tip": null,
+  "organ": "leaf",
+  "independent_id": "Scientific name from YOUR own visual analysis",
   "agrees_with_specialist": true,
   "visual_features": "One plain-English sentence describing what you see — leaf shape and colour, stem type, how it grows. No botanical jargon.",
   "display_name": "Most culturally relatable name in ${userLang}",
@@ -539,15 +498,26 @@ RESPOND WITH THIS EXACT JSON (no markdown fences):
   "health_category": "healthy",
   "health_status": "Healthy",
   "analysis": "Plain-language health assessment in ${userLang} — what you see, what it means, written warmly for a home gardener.",
-  "recovery_steps": ["Concrete action in ${userLang}. If a fertiliser or spray is needed, name the product type (e.g. liquid seaweed fertiliser, neem oil spray) — no brand names."],
+  "recovery_steps": ["Concrete action in ${userLang}. Name the product type if a treatment is needed — no brand names."],
   "pro_tip": "A practical, location-specific tip for ${log.location_name !== 'Unknown Location' ? log.location_name : 'home gardeners'} in ${userLang}. Do not mention South Asia unless location confirms it.",
   "weather_alert": null
 }`,
-      imageBase64, imageMimeType, logger, 'stage3_analysis',
+      imageBase64, imageMimeType, logger, 'stage2_analysis',
       0.1, 45000
     )
 
-    logger.endTimer('stage3_analysis')
+    logger.endTimer('stage2_analysis')
+
+    // Early exit if quality gate rejected the image
+    if (result.is_analyzable === false) {
+      const tip = String(result.photo_tip ?? 'Please take a clear photo of the plant with good lighting.')
+      await supabase.from('plant_logs').update({
+        status: 'quality_issue',
+        error_details: tip,
+        processing_log: logger.getLog(),
+      }).eq('id', record_id)
+      return new Response(JSON.stringify({ success: false, quality_issue: true, tip }))
+    }
 
     // -----------------------------------------------------------------------
     // Compute confidence from agreement signal — never trust AI self-reporting
@@ -573,11 +543,11 @@ RESPOND WITH THIS EXACT JSON (no markdown fences):
       // Gemini overrides PlantNet — honest but uncertain; display_name will get "Possibly"
       finalScore = 60
     } else {
-      // No usable PlantNet — Gemini only; cap at 78 since there's no cross-validation
+      // No usable PlantNet — Gemini only; cap at 70 since there's no cross-validation
       finalScore = 70
     }
 
-    logger.info('stage3_analysis', `independent=${geminiId}, agrees=${geminiAgrees}, final=${finalId}, computed_confidence=${finalScore}`, {
+    logger.info('stage2_analysis', `independent=${geminiId}, agrees=${geminiAgrees}, final=${finalId}, computed_confidence=${finalScore}`, {
       plantnet_score: plantNetConfidence,
       plantnet_name: plantNet?.scientificName,
     })
@@ -590,6 +560,7 @@ RESPOND WITH THIS EXACT JSON (no markdown fences):
       : displayName
     const healthColor = healthCategoryToColor(String(result.health_category ?? 'fair'))
 
+    logger.startTimer('stage3_db')
     const { error: updateError } = await supabase
       .from('plant_logs')
       .update({
@@ -609,15 +580,15 @@ RESPOND WITH THIS EXACT JSON (no markdown fences):
         WeatherAlert:        result.weather_alert ?? null,
         plantnet_candidates: plantNet?.topCandidates ?? [],
         status:              'done',
-        // Store photo_tip in error_details so ResultsScreen can surface it as gentle guidance
-        error_details:      quality.photo_tip ?? null,
+        // Store photo_tip as gentle guidance in ResultsScreen when image quality was imperfect
+        error_details:      result.photo_tip ?? null,
         processing_log:     logger.getLog(),
       })
       .eq('id', record_id)
 
     if (updateError) throw new Error(`DB update failed: ${updateError.message}`)
-    logger.endTimer('stage4_db')
-    logger.info('stage4_db', 'Pipeline complete')
+    logger.endTimer('stage3_db')
+    logger.info('stage3_db', 'Pipeline complete')
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json' },

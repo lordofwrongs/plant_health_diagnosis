@@ -9,6 +9,7 @@ export default function AnalysingScreen({ logId, onResultReady, onError }) {
   const [currentStep, setCurrentStep] = useState(0)
   const [errorState, setErrorState] = useState(null)
   const [qualityIssue, setQualityIssue] = useState(null) // photo tip from quality gate
+  const [elapsed, setElapsed] = useState(0)
   const resolvedRef = useRef(false)
 
   useEffect(() => {
@@ -92,10 +93,18 @@ export default function AnalysingScreen({ logId, onResultReady, onError }) {
       setCurrentStep((prev) => (prev < 3 ? prev + 1 : prev))
     }, 3500)
 
+    // ------------------------------------------------------------------
+    // 5. Elapsed time counter — shows "Analysing… Xs" to the user
+    // ------------------------------------------------------------------
+    const elapsedTimer = setInterval(() => {
+      setElapsed((prev) => prev + 1)
+    }, 1000)
+
     return () => {
       supabase.removeChannel(channel)
       clearInterval(pollTimer)
       clearInterval(stepTimer)
+      clearInterval(elapsedTimer)
       clearTimeout(timeoutTimer)
     }
   }, [logId, onResultReady])
@@ -169,7 +178,7 @@ export default function AnalysingScreen({ logId, onResultReady, onError }) {
           <Step label="Preparing recommendations"   done={currentStep >= 3}  active={currentStep === 3} />
         </div>
 
-        <p style={styles.note}>This usually takes 15–30 seconds</p>
+        <p style={styles.note}>Analysing… {elapsed}s</p>
       </div>
     </div>
   )
