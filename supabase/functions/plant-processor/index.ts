@@ -599,7 +599,8 @@ serve(async (req: Request) => {
         },
         pest_detected: { type: "boolean" },
         pest_name: { type: "string", nullable: true },
-        pest_treatment: { type: "array", nullable: true, items: { type: "string" } }
+        pest_treatment: { type: "array", nullable: true, items: { type: "string" } },
+        growth_narrative: { type: "string", nullable: true }
       },
       required: [
         "is_analyzable", "independent_id", "final_scientific_name",
@@ -666,7 +667,8 @@ STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
 10. CARE STEPS: Concrete actions in ${userLang}. Name product types, no brands.
 11. PEST DETECTION: Holes, webbing, or visible insects.
 12. VITAL SIGNS — rate 0–100 from visual evidence only. hydration: leaf turgor, wilting, soil moisture cues. light: growth direction, stretch, leaf colour. nutrients: colour uniformity, chlorosis, vigour. pest_risk: visible damage, webbing, insects (0 = none, 100 = severe).
-13. SEASONAL CONTEXT: 1–2 sentences on care adjustments for ${new Date().toLocaleString('default', { month: 'long' })} in the ${(log.latitude ?? 0) >= 0 ? 'Northern' : 'Southern'} Hemisphere in ${userLang}.`,
+13. SEASONAL CONTEXT: 1–2 sentences on care adjustments for ${new Date().toLocaleString('default', { month: 'long' })} in the ${(log.latitude ?? 0) >= 0 ? 'Northern' : 'Southern'} Hemisphere in ${userLang}.
+14. GROWTH NARRATIVE: ${nearbyLogs?.length ? `The previous scan showed this plant as "${nearbyLogs[0].HealthStatus}". Write 1–2 warm, specific sentences comparing the current condition to that previous scan — what has improved, stayed the same, or needs attention. Be encouraging and concrete. Write in ${userLang}.` : 'This is the first scan for this plant. Set growth_narrative to null.'}`,
       imageBase64, imageMimeType, logger, 'stage2_analysis',
       0.1, 45000, extraImages, PLANT_ANALYSIS_SCHEMA
     )
@@ -755,6 +757,7 @@ STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
         light_intensity_analysis: typeof result.light_intensity_analysis === 'string' ? result.light_intensity_analysis : null,
         seasonal_context:        typeof result.seasonal_context === 'string' ? result.seasonal_context : null,
         vital_signs:             result.vital_signs ?? null,
+        growth_milestones:       result.growth_narrative ? { narrative: String(result.growth_narrative) } : null,
         status:                  'done',
         // Store photo_tip as gentle guidance in ResultsScreen when image quality was imperfect
         error_details:      result.photo_tip ?? null,

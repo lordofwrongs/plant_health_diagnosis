@@ -174,7 +174,7 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
         }
         const { data } = await supabase
           .from('plant_logs')
-          .select('status, PlantName, ScientificName, AccuracyScore, HealthStatus, HealthColor, VisualAnalysis, CarePlan, ExpertTip, WeatherAlert, care_schedule, pest_detected, pest_name, pest_treatment, plantnet_candidates, vernacular_metadata, image_url, error_details, toxicity, light_intensity_analysis, seasonal_context, vital_signs')
+          .select('status, PlantName, ScientificName, AccuracyScore, HealthStatus, HealthColor, VisualAnalysis, CarePlan, ExpertTip, WeatherAlert, care_schedule, pest_detected, pest_name, pest_treatment, plantnet_candidates, vernacular_metadata, image_url, error_details, toxicity, light_intensity_analysis, seasonal_context, vital_signs, growth_milestones')
           .eq('id', localResult.id)
           .single()
         if (data?.status === 'done') {
@@ -314,16 +314,24 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
           <button onClick={onReset} style={styles.newScanBtn}>+ New Scan</button>
         </div>
 
-        {/* Re-run banner */}
+        {/* Re-run banner + skeleton */}
         {rerunning && (
-          <div style={styles.rerunBanner} role="status" aria-live="polite">
-            <span style={styles.rerunSpinner}>⟳</span>
-            Re-analysing with your correction — this takes about 20 seconds...
-          </div>
+          <>
+            <div style={styles.rerunBanner} role="status" aria-live="polite">
+              <span style={styles.rerunSpinner}>⟳</span>
+              Re-analysing with your correction — this takes about 20 seconds...
+            </div>
+            <div className="skeleton-shimmer verdant-card" style={{ height: '340px', borderRadius: 'var(--r-lg)' }} />
+            <div className="skeleton-shimmer verdant-card" style={{ height: '110px', borderRadius: 'var(--r-lg)' }} />
+            <div className="skeleton-shimmer verdant-card" style={{ height: '180px', borderRadius: 'var(--r-lg)' }} />
+            <div className="skeleton-shimmer verdant-card" style={{ height: '120px', borderRadius: 'var(--r-lg)' }} />
+          </>
         )}
         {rerunError && (
           <div style={styles.rerunError} role="alert">{rerunError}</div>
         )}
+
+        {!rerunning && (<>
 
         {/* Weather alert */}
         {localResult?.WeatherAlert && (
@@ -473,9 +481,11 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
             </div>
             <div style={styles.divider} />
             <p style={styles.trendNote}>
-              {localResult?.HealthStatus === previousScan?.HealthStatus
-                ? 'Plant conditions remain consistent with the last observation.'
-                : 'A change in health status has been detected since your last scan.'}
+              {localResult?.growth_milestones?.narrative
+                ? localResult.growth_milestones.narrative
+                : localResult?.HealthStatus === previousScan?.HealthStatus
+                  ? 'Plant conditions remain consistent with the last observation.'
+                  : 'A change in health status has been detected since your last scan.'}
             </p>
           </div>
         )}
@@ -553,6 +563,9 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
                 {localResult.care_schedule.notes}
               </p>
             )}
+            <button style={styles.reminderNudge} onClick={onBack}>
+              🔔 Set watering reminders in My Garden →
+            </button>
           </div>
         )}
 
@@ -776,6 +789,7 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
           )}
         </div>
 
+        </>)}
       </div>
     </div>
   )
@@ -1112,6 +1126,22 @@ const styles = {
     marginTop: '14px', fontSize: '12px', color: '#92400E',
     fontStyle: 'italic', padding: '8px 12px', background: '#FEF3C7',
     borderRadius: 'var(--r-sm)', border: '1px solid #FDE68A', margin: '14px 0 0',
+  },
+
+  reminderNudge: {
+    display: 'block',
+    width: '100%',
+    marginTop: '16px',
+    padding: '11px 0',
+    background: 'none',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--r-full)',
+    color: 'var(--mid)',
+    fontSize: '13px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    textAlign: 'center',
+    letterSpacing: '0.1px',
   },
 
   scheduleGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' },
