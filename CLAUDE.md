@@ -87,9 +87,10 @@ plant_logs
   pest_name text
   pest_treatment jsonb          -- array of treatment step strings
   created_at timestamptz
-  toxicity jsonb                -- {risk_cats, risk_dogs, risk_humans, notes} — schema only, not yet in AI pipeline
-  light_intensity_analysis text -- schema only, not yet in AI pipeline
-  seasonal_context text         -- schema only, not yet in AI pipeline
+  toxicity jsonb                -- {risk_cats, risk_dogs, risk_humans, notes} — ✅ wired Sprint 16
+  light_intensity_analysis text -- ✅ wired Sprint 16
+  seasonal_context text         -- ✅ wired Sprint 16
+  vital_signs jsonb             -- {hydration, light, nutrients, pest_risk} 0–100 scores — ✅ added Sprint 16 (migration: sprint16_enrichments.sql)
   growth_milestones jsonb       -- schema only, not yet in AI pipeline
 
 push_subscriptions               -- ✅ created Sprint 13
@@ -198,6 +199,7 @@ RLS: `plant_logs` — anon insert + select + delete (by user_id). `users` — an
 | 13 | Push notifications + care tracking: Web Push via VAPID, global opt-in with per-plant mute toggle in PlantDetailScreen. "Mark watered" button resets watering countdown using `plant_care_actions` table. `care-reminder` edge function runs hourly via pg_cron, sends reminders at 8am in each user's local timezone (captured at subscribe time via `Intl.DateTimeFormat`). iOS requires PWA installed to home screen (iOS 16.4+). **DB migration + pg_cron setup**: `supabase/migrations/sprint13_push_notifications.sql`. **Vercel**: add `VITE_VAPID_PUBLIC_KEY`. **Supabase secrets**: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`. |
 | 14 | Observability: Sentry ErrorBoundary active (`VITE_SENTRY_DSN` in Vercel). PostHog funnel analytics — 15 events across 4 components (`app_opened`, `photo_added`, `scan_submitted`, `analysis_complete`, `analysis_failed`, `register_modal_shown`, `register_completed`, `register_skipped`, `qa_opened`, `qa_question_sent`, `correction_submitted`, `care_action_logged`, `notification_opted_in`, `notification_opted_out`, `plant_deleted`). PlantNet quota monitor in `plant-processor` (warns at ≥400/day). Fixed Gemini response schema bug (`nullable: true` not `type: ["string","null"]`). **Vercel**: `VITE_POSTHOG_KEY`, `VITE_SENTRY_DSN`. Events confirmed 200 OK via Network tab. |
 | 15 | Onboarding gaps: (1) **Sample result preview** — compact horizontal card (plant name, scientific name, health badge, 93% confidence, care pills) shown above the upload form on first visit only, auto-hides when user adds their first photo. (2) **First-scan celebration upgrade** — floating leaf particles (`floatUp` keyframe), bouncing white card (`celebPop` keyframe) showing actual plant name ("Meet your Snake Gourd!"), "See your results →" CTA, tap-anywhere-to-dismiss with proper `clearTimeout` via ref, auto-dismiss extended to 3.5s. (3) **Empty garden redesign** — fan of 3 overlapping photo cards (dark forest / mid-green / light mint gradients, rotated at −14°/+10°/−2°) teases what a full garden looks like. No external animation libs. |
+| 16 | AI pipeline enrichments + UX polish + Voice Q&A: (1) **AI enrichments** — `toxicity`, `light_intensity_analysis`, `seasonal_context`, `vital_signs` (hydration/light/nutrients/pest_risk 0–100 scores) now wired through Gemini prompt → DB → UI. `vital_signs` stored in new `plant_logs.vital_signs jsonb` column (migration: `sprint16_enrichments.sql`). (2) **Vital Signs meters** — 4-row progress bar panel in ResultsScreen, teal/amber/red by score, pest_risk inverted. (3) **Toxicity/Safety card** — per-species cat/dog/human risk with colour-coded pills. (4) **Environment card** — light analysis + seasonal care note. (5) **Colourblind-safe palette** — `healthCategoryToColor()` changed from green/red to teal (`#0D9488`)/amber/red; `--healthy` CSS var updated. (6) **HistoryScreen skeleton** — 4-card shimmer grid replaces loading spinner. (7) **Voice Q&A** — 🎤 mic button in Q&A input row, Web Speech API (`SpeechRecognition`/`webkitSpeechRecognition`), language-aware (en-US/hi-IN/ta-IN/te-IN), pulsing teal animation while listening, gracefully hidden when unsupported. **DB migration must be run manually**: `supabase/migrations/sprint16_enrichments.sql`. **Deploy edge function**: `npx supabase functions deploy plant-processor`. |
 
 ---
 
@@ -205,11 +207,9 @@ RLS: `plant_logs` — anon insert + select + delete (by user_id). `users` — an
 
 | # | Feature | Notes |
 |---|---|---|
-| 2 | **AI pipeline enrichments** | Toxicity matrix (pets/children risk), light intensity analysis, seasonal care logic — fields already in `plant_logs` schema, not yet in Gemini prompt. |
-| 3 | **UX polish** | Vital Signs meters (Hydration/Light/Nutrients/Pest), growth narratives across scans, skeleton screens, colourblind-safe health palette. |
-| 4 | **Voice Q&A** | Web Speech API in Q&A section for hands-free gardening. Multimodal: pass audio blobs directly to Gemini. |
-| 5 | **Weekly email digest** | Registered users only. Provider TBD (Resend vs Sendgrid). pg_cron scheduled edge function. Content: plant health summary + next watering per plant. Needs design discussion: frequency, opt-in vs opt-out, template. |
-| 6 | **Monetisation — Stripe freemium** | Stripe Checkout, scan usage counter, monthly free limit, Pro gating, upgrade prompt at soft limit. |
+| 1 | **UX polish (remaining)** | Growth narratives across scans (Gemini-generated when history exists), skeleton screens for ResultsScreen correction re-run. |
+| 2 | **Weekly email digest** | Registered users only. Provider TBD (Resend vs Sendgrid). pg_cron scheduled edge function. Content: plant health summary + next watering per plant. Needs design discussion: frequency, opt-in vs opt-out, template. |
+| 3 | **Monetisation — Stripe freemium** | Stripe Checkout, scan usage counter, monthly free limit, Pro gating, upgrade prompt at soft limit. |
 
 ---
 

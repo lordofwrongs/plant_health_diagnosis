@@ -251,9 +251,9 @@ async function fetchWeather(
 // ---------------------------------------------------------------------------
 function healthCategoryToColor(category: string): string {
   const c = category.toLowerCase().trim()
-  if (c === 'healthy')  return '#4CAF50'
-  if (c === 'critical') return '#FF5252'
-  return '#FF9800' // fair / stressed / recovering
+  if (c === 'healthy')  return '#0D9488'  // teal — distinguishable in all colorblindness types
+  if (c === 'critical') return '#DC2626'  // red
+  return '#D97706'  // amber — fair / stressed / recovering
 }
 
 // ---------------------------------------------------------------------------
@@ -576,6 +576,15 @@ serve(async (req: Request) => {
         },
         light_intensity_analysis: { type: "string" },
         seasonal_context: { type: "string" },
+        vital_signs: {
+          type: "object",
+          properties: {
+            hydration:  { type: "number" },
+            light:      { type: "number" },
+            nutrients:  { type: "number" },
+            pest_risk:  { type: "number" }
+          }
+        },
         recovery_steps: { type: "array", items: { type: "string" } },
         pro_tip: { type: "string" },
         weather_alert: { type: "string", nullable: true },
@@ -593,10 +602,11 @@ serve(async (req: Request) => {
         pest_treatment: { type: "array", nullable: true, items: { type: "string" } }
       },
       required: [
-        "is_analyzable", "independent_id", "final_scientific_name", 
-        "display_name", "health_category", "health_status", 
-        "analysis", "recovery_steps", "pro_tip", "care_schedule", 
-        "pest_detected", "toxicity", "light_intensity_analysis"
+        "is_analyzable", "independent_id", "final_scientific_name",
+        "display_name", "health_category", "health_status",
+        "analysis", "recovery_steps", "pro_tip", "care_schedule",
+        "pest_detected", "toxicity", "light_intensity_analysis",
+        "seasonal_context", "vital_signs"
       ]
     };
 
@@ -654,7 +664,9 @@ STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
 8. USER LANGUAGE: All user-facing text (except health_category) in ${userLang}.
 9. weather_alert: Only if weather data indicates genuine risk. Otherwise null.
 10. CARE STEPS: Concrete actions in ${userLang}. Name product types, no brands.
-11. PEST DETECTION: Holes, webbing, or visible insects.`,
+11. PEST DETECTION: Holes, webbing, or visible insects.
+12. VITAL SIGNS — rate 0–100 from visual evidence only. hydration: leaf turgor, wilting, soil moisture cues. light: growth direction, stretch, leaf colour. nutrients: colour uniformity, chlorosis, vigour. pest_risk: visible damage, webbing, insects (0 = none, 100 = severe).
+13. SEASONAL CONTEXT: 1–2 sentences on care adjustments for ${new Date().toLocaleString('default', { month: 'long' })} in the ${(log.latitude ?? 0) >= 0 ? 'Northern' : 'Southern'} Hemisphere in ${userLang}.`,
       imageBase64, imageMimeType, logger, 'stage2_analysis',
       0.1, 45000, extraImages, PLANT_ANALYSIS_SCHEMA
     )
@@ -735,11 +747,15 @@ STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
         ExpertTip:           result.pro_tip,
         WeatherAlert:        result.weather_alert ?? null,
         care_schedule:       result.care_schedule ?? null,
-        pest_detected:       Boolean(result.pest_detected),
-        pest_name:           typeof result.pest_name === 'string' ? result.pest_name : null,
-        pest_treatment:      Array.isArray(result.pest_treatment) ? result.pest_treatment : null,
-        plantnet_candidates: plantNet?.topCandidates ?? [],
-        status:              'done',
+        pest_detected:           Boolean(result.pest_detected),
+        pest_name:               typeof result.pest_name === 'string' ? result.pest_name : null,
+        pest_treatment:          Array.isArray(result.pest_treatment) ? result.pest_treatment : null,
+        plantnet_candidates:     plantNet?.topCandidates ?? [],
+        toxicity:                result.toxicity ?? null,
+        light_intensity_analysis: typeof result.light_intensity_analysis === 'string' ? result.light_intensity_analysis : null,
+        seasonal_context:        typeof result.seasonal_context === 'string' ? result.seasonal_context : null,
+        vital_signs:             result.vital_signs ?? null,
+        status:                  'done',
         // Store photo_tip as gentle guidance in ResultsScreen when image quality was imperfect
         error_details:      result.photo_tip ?? null,
         processing_log:     logger.getLog(),

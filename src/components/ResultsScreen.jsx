@@ -44,6 +44,12 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
   const [qaError, setQaError] = useState(null)
   const [qaLoaded, setQaLoaded] = useState(false)
 
+  // Voice Q&A state
+  const [isListening, setIsListening] = useState(false)
+  const recognitionRef = useRef(null)
+  const speechSupported = typeof window !== 'undefined' &&
+    ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)
+
   // Sync localResult when parent passes a new scan (timeline navigation)
   useEffect(() => {
     setLocalResult(result)
@@ -168,7 +174,7 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
         }
         const { data } = await supabase
           .from('plant_logs')
-          .select('status, PlantName, ScientificName, AccuracyScore, HealthStatus, HealthColor, VisualAnalysis, CarePlan, ExpertTip, WeatherAlert, care_schedule, pest_detected, pest_name, pest_treatment, plantnet_candidates, vernacular_metadata, image_url, error_details')
+          .select('status, PlantName, ScientificName, AccuracyScore, HealthStatus, HealthColor, VisualAnalysis, CarePlan, ExpertTip, WeatherAlert, care_schedule, pest_detected, pest_name, pest_treatment, plantnet_candidates, vernacular_metadata, image_url, error_details, toxicity, light_intensity_analysis, seasonal_context, vital_signs')
           .eq('id', localResult.id)
           .single()
         if (data?.status === 'done') {
@@ -224,6 +230,40 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
   }
 
   const isGuest = localResult?.user_id?.startsWith('guest_')
+
+  // ── Voice Q&A ────────────────────────────────────────────────────────────────
+  const LANG_CODES = { English: 'en-US', Hindi: 'hi-IN', Tamil: 'ta-IN', Telugu: 'te-IN' }
+
+  const startVoiceInput = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) return
+    const rec = new SR()
+    recognitionRef.current = rec
+    rec.lang = LANG_CODES[userLanguage] || 'en-US'
+    rec.interimResults = false
+    rec.maxAlternatives = 1
+    rec.onstart  = () => setIsListening(true)
+    rec.onresult = (e) => { setQaInput(e.results[0][0].transcript); setIsListening(false) }
+    rec.onerror  = () => setIsListening(false)
+    rec.onend    = () => setIsListening(false)
+    rec.start()
+  }
+
+  const stopVoiceInput = () => {
+    recognitionRef.current?.stop()
+    setIsListening(false)
+  }
+
+  // ── Toxicity helper ──────────────────────────────────────────────────────────
+  const getToxicityLevel = (text) => {
+    if (!text) return 'unknown'
+    const t = text.toLowerCase()
+    if (t.includes('safe') || t.includes('non-toxic') || t.includes('edible') || t.includes('no risk')) return 'safe'
+    if (t.includes('mild') || t.includes('slight') || t.includes('caution') || t.includes('low risk') || t.includes('monitor')) return 'caution'
+    return 'toxic'
+  }
+
+  const TOXICITY_COLOR = { safe: '#0D9488', caution: '#D97706', toxic: '#DC2626', unknown: 'var(--text-4)' }
 
   return (
     <div style={styles.page}>
@@ -383,6 +423,36 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
           </div>
         </div>
 
+        {/* Vital Signs meters */}
+        {localResult?.vital_signs && (
+          <div className="fade-up-delay-1 verdant-card" style={styles.section}>
+            <h3 style={styles.sectionTitle}>Vital Signs</h3>
+            <div style={styles.vitalList}>
+              {[
+                { key: 'hydration', label: 'Hydration', icon: '💧', invert: false },
+                { key: 'light',     label: 'Light',     icon: '☀️', invert: false },
+                { key: 'nutrients', label: 'Nutrients', icon: '🌱', invert: false },
+                { key: 'pest_risk', label: 'Pest Risk', icon: '🐛', invert: true },
+              ].map(({ key, label, icon, invert }) => {
+                const raw = localResult.vital_signs[key] ?? 50
+                const score = Math.min(100, Math.max(0, Math.round(raw)))
+                const effective = invert ? 100 - score : score
+                const barColor = effective >= 70 ? '#0D9488' : effective >= 40 ? '#D97706' : '#DC2626'
+                return (
+                  <div key={key} style={styles.vitalRow}>
+                    <span style={styles.vitalIcon} aria-hidden="true">{icon}</span>
+                    <span style={styles.vitalLabel}>{label}</span>
+                    <div style={styles.vitalBarTrack} role="meter" aria-valuenow={score} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
+                      <div style={{ ...styles.vitalBarFill, width: `${score}%`, background: barColor }} />
+                    </div>
+                    <span style={{ ...styles.vitalScore, color: barColor }}>{score}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Health journey */}
         {previousScan && (
           <div className="fade-up-delay-1 verdant-card" style={styles.section}>
@@ -428,6 +498,28 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
             ))}
           </div>
         </div>
+
+        {/* Environment — light + seasonal context */}
+        {(localResult?.light_intensity_analysis || localResult?.seasonal_context) && (
+          <div className="fade-up-delay-2 verdant-card" style={styles.section}>
+            <h3 style={styles.sectionTitle}>Environment</h3>
+            {localResult.light_intensity_analysis && (
+              <div style={styles.envRow}>
+                <span style={styles.envIcon} aria-hidden="true">☀️</span>
+                <p style={styles.envText}>{localResult.light_intensity_analysis}</p>
+              </div>
+            )}
+            {localResult.light_intensity_analysis && localResult.seasonal_context && (
+              <div style={styles.divider} />
+            )}
+            {localResult.seasonal_context && (
+              <div style={styles.envRow}>
+                <span style={styles.envIcon} aria-hidden="true">📅</span>
+                <p style={styles.envText}>{localResult.seasonal_context}</p>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Care schedule */}
         {localResult?.care_schedule && (localResult.care_schedule.water_every_days || localResult.care_schedule.fertilise_every_days) && (
@@ -485,6 +577,36 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
               </div>
             )}
             <p style={styles.pestWarning}>Check nearby plants for early signs of the same pest.</p>
+          </div>
+        )}
+
+        {/* Toxicity / Safety card */}
+        {localResult?.toxicity && (localResult.toxicity.risk_cats || localResult.toxicity.risk_dogs || localResult.toxicity.risk_humans) && (
+          <div className="fade-up-delay-2 verdant-card" style={styles.section}>
+            <h3 style={styles.sectionTitle}>Safety</h3>
+            <div style={styles.toxGrid}>
+              {[
+                { label: 'Cats',   icon: '🐱', value: localResult.toxicity.risk_cats },
+                { label: 'Dogs',   icon: '🐶', value: localResult.toxicity.risk_dogs },
+                { label: 'Humans', icon: '👤', value: localResult.toxicity.risk_humans },
+              ].filter(r => r.value).map(({ label, icon, value }) => {
+                const level = getToxicityLevel(value)
+                return (
+                  <div key={label} style={styles.toxRow}>
+                    <span style={styles.toxIcon} aria-hidden="true">{icon}</span>
+                    <span style={styles.toxLabel}>{label}</span>
+                    <span style={{ ...styles.toxValue, color: TOXICITY_COLOR[level], borderColor: TOXICITY_COLOR[level], background: `${TOXICITY_COLOR[level]}12` }}>
+                      {value}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+            {localResult.toxicity.notes && (
+              <p style={{ ...styles.bodyText, marginTop: '14px', fontSize: '13px', color: 'var(--text-3)' }}>
+                {localResult.toxicity.notes}
+              </p>
+            )}
           </div>
         )}
 
@@ -605,14 +727,28 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
 
               {userTurns < MAX_QA_TURNS ? (
                 <div style={styles.qaInputRow}>
+                  {speechSupported && (
+                    <button
+                      style={{
+                        ...styles.micBtn,
+                        ...(isListening ? styles.micBtnActive : {}),
+                      }}
+                      onClick={isListening ? stopVoiceInput : startVoiceInput}
+                      disabled={qaLoading}
+                      aria-label={isListening ? 'Stop recording' : 'Start voice input'}
+                      title={isListening ? 'Tap to stop' : 'Ask by voice'}
+                    >
+                      🎤
+                    </button>
+                  )}
                   <input
                     type="text"
-                    placeholder="Ask a care question..."
+                    placeholder={isListening ? 'Listening...' : 'Ask a care question...'}
                     value={qaInput}
                     onChange={e => setQaInput(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && sendQuestion()}
-                    style={styles.qaInput}
-                    disabled={qaLoading}
+                    style={{ ...styles.qaInput, ...(isListening ? styles.qaInputListening : {}) }}
+                    disabled={qaLoading || isListening}
                     aria-label="Follow-up question"
                   />
                   <button
@@ -987,6 +1123,35 @@ const styles = {
   scheduleLabel: { fontSize: '11px', fontWeight: '700', color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.4px' },
   scheduleFreq:  { fontSize: '12px', color: 'var(--primary)', fontWeight: '600' },
 
+  // Vital Signs
+  vitalList: { display: 'flex', flexDirection: 'column', gap: '12px' },
+  vitalRow: { display: 'flex', alignItems: 'center', gap: '10px' },
+  vitalIcon: { fontSize: '16px', width: '20px', textAlign: 'center', flexShrink: 0 },
+  vitalLabel: { fontSize: '13px', fontWeight: '600', color: 'var(--text-2)', width: '76px', flexShrink: 0 },
+  vitalBarTrack: {
+    flex: 1, height: '8px', background: 'var(--mist)',
+    borderRadius: 'var(--r-full)', overflow: 'hidden',
+    border: '1px solid var(--border)',
+  },
+  vitalBarFill: { height: '100%', borderRadius: 'var(--r-full)', transition: 'width 0.6s ease' },
+  vitalScore: { fontSize: '12px', fontWeight: '800', width: '28px', textAlign: 'right', flexShrink: 0 },
+
+  // Environment
+  envRow: { display: 'flex', gap: '12px', alignItems: 'flex-start' },
+  envIcon: { fontSize: '18px', flexShrink: 0, marginTop: '1px' },
+  envText: { fontSize: '14px', color: 'var(--text-2)', lineHeight: '1.6', margin: 0 },
+
+  // Toxicity
+  toxGrid: { display: 'flex', flexDirection: 'column', gap: '10px' },
+  toxRow: { display: 'flex', alignItems: 'center', gap: '10px' },
+  toxIcon: { fontSize: '18px', width: '24px', textAlign: 'center', flexShrink: 0 },
+  toxLabel: { fontSize: '13px', fontWeight: '600', color: 'var(--text-2)', width: '60px', flexShrink: 0 },
+  toxValue: {
+    flex: 1, fontSize: '12px', fontWeight: '600', lineHeight: '1.4',
+    padding: '4px 10px', borderRadius: 'var(--r-sm)',
+    border: '1px solid',
+  },
+
   // Q&A section
   qaSection: { overflow: 'hidden' },
   qaHeader: {
@@ -1046,6 +1211,18 @@ const styles = {
     fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap',
   },
   qaSubmitDisabled: { opacity: 0.4, cursor: 'not-allowed' },
+  micBtn: {
+    width: '40px', height: '40px', borderRadius: '50%',
+    border: '1.5px solid var(--border)', background: 'var(--mist)',
+    fontSize: '16px', cursor: 'pointer', flexShrink: 0,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    transition: 'border-color 0.2s, background 0.2s',
+  },
+  micBtnActive: {
+    borderColor: '#0D9488', background: 'rgba(13,148,136,0.1)',
+    animation: 'voicePulse 1s ease-in-out infinite',
+  },
+  qaInputListening: { borderColor: '#0D9488', background: 'rgba(13,148,136,0.05)' },
   qaLimitNote: { fontSize: '13px', color: 'var(--text-4)', margin: 0, textAlign: 'center' },
   qaCount: { fontSize: '11px', color: 'var(--text-4)', margin: 0, textAlign: 'center' },
   qaGuestNudge: {

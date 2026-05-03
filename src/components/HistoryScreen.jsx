@@ -61,9 +61,18 @@ export default function HistoryScreen({ onSelectPlant, onRetakePhoto }) {
 
   if (loading) {
     return (
-      <div style={styles.loadingPage}>
-        <div style={styles.loadingDot} />
-        <p style={styles.loadingText}>Loading your garden...</p>
+      <div style={styles.page}>
+        <header style={styles.header}>
+          <div className="skeleton-shimmer" style={{ width: '120px', height: '32px', borderRadius: 'var(--r-sm)' }} />
+          <div className="skeleton-shimmer" style={{ width: '60px', height: '14px', borderRadius: 'var(--r-sm)', marginTop: '6px' }} />
+        </header>
+        <div style={styles.grid} aria-label="Loading garden" aria-busy="true">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} style={{ ...styles.card, cursor: 'default' }} aria-hidden="true">
+              <div className="skeleton-shimmer" style={{ width: '100%', height: '100%' }} />
+            </div>
+          ))}
+        </div>
       </div>
     )
   }
@@ -192,23 +201,6 @@ function EmptyState({ onRetakePhoto }) {
 }
 
 const styles = {
-  loadingPage: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '14px',
-  },
-  loadingDot: {
-    width: '10px',
-    height: '10px',
-    borderRadius: '50%',
-    background: 'var(--leaf)',
-    animation: 'pulse 1.4s infinite',
-  },
-  loadingText: { fontSize: '14px', color: 'var(--text-4)' },
-
   page: {
     flex: 1,
     padding: '32px 20px 60px',

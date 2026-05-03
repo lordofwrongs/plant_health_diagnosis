@@ -26,7 +26,7 @@
   --gold-bg:    #FEF7E0;
 
   /* ── Health Status ────────────────────────────────── */
-  --healthy:    #059669;
+  --healthy:    #0D9488;  /* teal — colourblind-safe (distinct from red in all types) */
   --fair:       #D97706;
   --critical:   #DC2626;
 
@@ -130,6 +130,16 @@ html, body {
 .fade-up-delay-2  { animation: fadeUp 0.45s ease 0.16s forwards; opacity: 0; }
 .fade-up-delay-3  { animation: fadeUp 0.45s ease 0.24s forwards; opacity: 0; }
 .fade-in          { animation: fadeIn 0.3s ease forwards; }
+
+@keyframes voicePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(13,148,136,0.5); }
+  50%       { box-shadow: 0 0 0 8px rgba(13,148,136,0); }
+}
+.skeleton-shimmer {
+  background: linear-gradient(90deg, var(--mist) 25%, var(--sage) 50%, var(--mist) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease infinite;
+}
 
 /* ── Card base ───────────────────────────────────────── */
 .verdant-card {
