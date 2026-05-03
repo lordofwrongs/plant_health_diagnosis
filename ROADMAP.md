@@ -11,159 +11,186 @@ A state-of-the-art plant intelligence companion for home gardeners — accurate 
 
 ---
 
-## Current State (May 2026)
+## Current State — v1.0 (May 2026)
 
-| What works | What's still missing |
+**Status: Production complete.** All planned features shipped and confirmed working.
+
+| What works | Notes |
 |---|---|
-| Dual-source cross-validated plant ID (PlantNet + Gemini) | Monetisation — no revenue path |
-| Calibrated confidence scoring (5 tiers, 60–93%) | Push notifications — reminders don't reach users |
-| Multi-language (EN/HI/TA/TE) | Email reminders — no scheduled digest |
-| Weather-aware care advice | Full observability — Sentry not wired, no funnel analytics |
-| Multi-angle diagnosis (3 slots) | First-scan celebration / sample result walkthrough |
-| Pest identification + treatment plan | Stripe / freemium gating |
-| PlantNet SHA-256 result caching | Colourblind-safe palette + skeleton screens |
-| Permanent garden with cross-device recovery | PlantNet quota monitoring |
-| My Plants grid + per-plant detail screen | |
-| User feedback corrections + Q&A (3 turns/scan) | |
-| Onboarding tour on first visit | |
-| PWA — installable, offline-capable | |
-| Accessibility (ARIA, roles, alt text) | |
+| Dual-source cross-validated plant ID (PlantNet + Gemini) | Anti-anchoring design |
+| Calibrated confidence scoring (5 tiers, 60–93%) | Displayed with visual tier badge |
+| Multi-language (EN/HI/TA/TE) | Stored in localStorage, passed to Gemini |
+| Weather-aware care advice | Browser geolocation + ipapi.co fallback |
+| Multi-angle diagnosis (3 slots) | Whole plant / leaf / stem |
+| Pest identification + treatment plan | Gemini instruction, pest card in UI |
+| Vital Signs panel (Hydration/Light/Nutrients/Pest Risk) | 0–100 progress bars |
+| Toxicity/Safety card (cat/dog/human) | Per-species coloured risk pills |
+| Environment card (light analysis + seasonal context) | From photo analysis + current month |
+| Growth narratives across scans | Gemini-generated warm 1–2 sentence comparison |
+| PlantNet SHA-256 result caching | `plantnet_cache` table |
+| Permanent garden with cross-device recovery | Magic link auth + guest_id migration |
+| My Plants 2-column photo grid | HistoryScreen with skeleton shimmer loading |
+| Per-plant detail screen (hero, timeline, care badge) | PlantDetailScreen |
+| User feedback corrections + Q&A (3 turns/scan) | Skips PlantNet on re-run; anti-anchoring |
+| Voice Q&A via Web Speech API | Language-aware; gracefully hidden when unsupported |
+| Push notifications (VAPID) + per-plant mute | Global opt-in in PlantDetailScreen, 8am local |
+| Watering countdown + Mark Watered | Resets countdown, logged to `plant_care_actions` |
+| Weekly email digest (Brevo) | Sunday 8am UTC; one-click unsubscribe |
+| Onboarding tour | Banner + pulsing slot borders; auto-dismisses |
+| Sample result preview on first visit | Horizontal card above upload; hides on first photo |
+| First-scan celebration | Floating leaf particles + bouncing card with plant name |
+| Empty garden redesign | Fan of 3 overlapping photo cards |
+| Correction re-run skeleton | Shimmer cards replace stale content during re-analysis |
+| Care reminder nudge in ResultsScreen | "Set watering reminders in My Garden →" button |
+| PWA — installable, offline-capable | Icons 192+512 PNG + SVG, theme `#1B4332` |
+| Colourblind-safe health palette | Teal (`#0D9488`) / Amber / Red — no green/red reliance |
+| HistoryScreen skeleton shimmer | 4-card shimmer grid replaces loading spinner |
+| Accessibility | ARIA labels, roles, alt text |
+| PostHog analytics | 15 events across scan funnel |
+| Sentry error tracking | ErrorBoundary + DSN wired |
 
 ---
 
-## Sprint Status
-
----
+## Sprint History
 
 ### ✅ Sprint 1 — Speed: Merge Pipeline into One Gemini Call
-**Shipped.** Quality gate merged into main Gemini call (single call handles quality + ID + health). PlantNet runs in parallel. p50 scan time reduced to ~4–5s.
+Quality gate merged into main Gemini call (single call handles quality + ID + health). PlantNet runs in parallel. p50 scan time reduced to ~4–5s.
 
 ---
 
 ### ✅ Sprint 2 — Account: Permanent Garden with Cross-Device Recovery
-**Shipped.** Magic link auth, guest_id → auth user migration, cross-device garden recovery, `user_profiles` table.
+Magic link auth, guest_id → auth user migration, cross-device garden recovery, `user_profiles` table.
 
 ---
 
-### 🔄 Sprint 3 — Onboarding: Convert First-Time Visitors
-**Partially shipped.**
-- ✅ Live "X plants analysed" counter on UploadScreen trust bar
-- ✅ Photo guide accordion (3 ideal angles) on UploadScreen
-- ✅ Onboarding tour banner + pulsing slot borders on first visit (Sprint 12a)
-- ❌ Sample result walkthrough (animated preview of full diagnosis before upload)
-- ❌ First-scan celebration moment before registration prompt
-- ❌ Empty garden state redesign (invitation with sample plant card)
+### ✅ Sprint 3 — Onboarding: Convert First-Time Visitors
+- Live "X plants analysed" counter on UploadScreen trust bar
+- Photo guide accordion (3 ideal angles) on UploadScreen
+- Onboarding tour banner + pulsing slot borders on first visit (Sprint 12a)
+- Sample result preview card above upload slots (Sprint 15)
+- First-scan celebration (Sprint 15)
+- Empty garden redesign — fan of overlapping cards (Sprint 15)
 
 ---
 
-### 🔄 Sprint 4 — Retention: Care Schedule + Email Reminders
-**Partially shipped.**
-- ✅ Structured `care_schedule` JSON generated by Gemini, stored in `plant_logs`
-- ✅ Watering badge in PlantDetailScreen (next water date + urgency)
-- ❌ Email reminder system (Resend/Sendgrid) — **pending discussion**
-- ❌ Weekly garden digest email — **pending discussion**
-- ❌ Reminder preferences per user
+### ✅ Sprint 4 — Retention: Care Schedule + Email Reminders
+- Structured `care_schedule` JSON generated by Gemini, stored in `plant_logs`
+- Watering badge in PlantDetailScreen (next water date + urgency)
+- Push notifications (Sprint 13) — Web Push VAPID, 8am local time
+- Weekly email digest (Sprint 17) — Brevo, Sunday 8am UTC
 
 ---
 
 ### ✅ Sprint 5 — Low-Confidence UX: Honest Uncertainty Communication
-**Shipped.** Tiered result cards (colour + border by confidence tier), "We're not sure" banner, "Could also be" row, confidence badge tooltip, re-scan CTA on low/uncertain results, "Possibly" prefix on override IDs.
+Tiered result cards (colour + border by confidence tier), "We're not sure" banner, "Could also be" row, confidence badge tooltip, re-scan CTA on low/uncertain results, "Possibly" prefix on override IDs.
 
 ---
 
-### 🔄 Sprint 6 — Monetisation: Freemium Model
-**Partially shipped.**
-- ✅ PlantNet SHA-256 result caching (quota protection, repeat ID speedup) — `plantnet_cache` table
-- ❌ Stripe Checkout integration
-- ❌ Scan usage counter + monthly limit
-- ❌ Free vs Pro feature gates
-- ❌ Upgrade prompt at soft limit
+### ✅ Sprint 6 — PlantNet Caching
+PlantNet SHA-256 result caching (`plantnet_cache` table) — quota protection and repeat ID speedup. PlantNet quota monitoring (warns at ≥400/day in edge function logs).
 
 ---
 
 ### ✅ Sprint 7 — Multi-Angle Diagnosis
-**Shipped.** 3-slot upload UI (whole plant / leaf / stem), multi-image Gemini call, single diagnosis record from multiple angles. PlantNet runs on primary image.
+3-slot upload UI (whole plant / leaf / stem), multi-image Gemini call, single diagnosis record from multiple angles. PlantNet runs on primary image.
 
 ---
 
 ### ✅ Sprint 8 — Pest Identification
-**Shipped.** Pest detection in Gemini prompt (fields: `pest_detected`, `pest_name`, `pest_treatment`). Pest card in ResultsScreen with treatment steps. "Check nearby plants" warning.
+Pest detection in Gemini prompt (`pest_detected`, `pest_name`, `pest_treatment`). Pest card in ResultsScreen with treatment steps.
 
 ---
 
-### ✅ Sprint 9 — PWA + Push Notifications
-**Shipped.**
-- ✅ PWA manifest, service worker (network-first nav, cache-first assets, offline page)
-- ✅ Icons (192 + 512 PNG + SVG), theme colour, installable on iOS/Android
-- ✅ Web Push via VAPID — `care-reminder` edge function, `push_subscriptions` / `push_mutes` / `plant_care_actions` tables, global opt-in + per-plant mute in PlantDetailScreen, "Mark watered" button resets countdown. iOS requires PWA installed (16.4+). **Requires**: run `sprint13_push_notifications.sql` migration, set VAPID Supabase secrets, add `VITE_VAPID_PUBLIC_KEY` to Vercel, enable pg_cron + pg_net extensions, schedule cron job (see migration SQL comments).
+### ✅ Sprint 9 — PWA
+PWA manifest, service worker (network-first nav, cache-first assets, offline page). Icons (192+512 PNG + SVG), theme colour, installable on iOS/Android.
 
 ---
 
-### 🔄 Sprint 10 — Accessibility + Observability
-**Partially shipped.**
-- ✅ ARIA labels, roles, alt text on all key elements
-- ✅ Sentry template in `main.jsx` (DSN placeholder only — not wired to a real project)
-- ❌ Scan funnel analytics (upload → result → registration → reminder opt-in)
-- ❌ PlantNet quota monitoring alert (80% daily usage warning)
-- ❌ Skeleton screens for async states
-- ❌ Colourblind-safe health palette
+### ✅ Sprint 10 — Accessibility + Observability
+- ARIA labels, roles, alt text on all key elements
+- Sentry ErrorBoundary wired (`VITE_SENTRY_DSN`)
+- PostHog funnel analytics — 15 events (Sprint 14)
+- Colourblind-safe health palette — teal/amber/red (Sprint 16)
+- Skeleton screens — HistoryScreen shimmer grid (Sprint 16), correction re-run skeleton (Sprint 18)
 
 ---
 
-### ✅ Sprint 11 — My Plants Garden View (beyond original roadmap)
-**Shipped.** HistoryScreen 2-column photo grid grouped by plant. PlantDetailScreen: hero banner, scan timeline, retry/retake/delete, watering badge. Navigation: Garden → PlantDetailScreen → ResultsScreen (back returns to PlantDetailScreen).
+### ✅ Sprint 11 — My Plants Garden View
+HistoryScreen 2-column photo grid grouped by plant. PlantDetailScreen: hero banner, scan timeline, retry/delete, watering badge. Navigation: Garden → PlantDetailScreen → ResultsScreen (back returns to PlantDetailScreen).
 
 ---
 
-### ✅ Sprint 12a — Onboarding Tour (beyond original roadmap)
-**Shipped.** First-visit green callout banner above upload slots + pulsing green border animation on all 3 slots. `localStorage` flag `botaniq_onboarding_done`. Auto-dismisses on first photo added or "Got it" tap.
+### ✅ Sprint 12a — Onboarding Tour
+First-visit green callout banner above upload slots + pulsing green border animation on all 3 slots. `localStorage` flag `botaniq_onboarding_done`. Auto-dismisses on first photo added.
 
 ---
 
-### ✅ Sprint 12b — User Feedback + Q&A (beyond original roadmap)
-**Shipped.**
-- Thumbs-down → correction modal → correction re-run (skips PlantNet, injects user correction as top candidate; Gemini still IDs independently first)
-- New `plant-chat` edge function: 3-turn Q&A per scan, Gemini answers using plant diagnosis as context
-- Registered users: prior Q&A for same plant passed to Gemini as personalisation context
+### ✅ Sprint 12b — User Feedback + Q&A
+- Thumbs-down → correction modal → re-run (skips PlantNet; Gemini IDs independently first)
+- `plant-chat` edge function: 3-turn Q&A per scan, history stored in `plant_conversations`
+- Registered users: prior Q&A passed to Gemini as personalisation context
 - Q&A collapsible section in ResultsScreen with turn counter + guest sign-up nudge
 - 💬 Q&A indicator badge on PlantDetailScreen scan rows
-- `identification_feedback` + `plant_conversations` tables (✅ migration executed)
+- `identification_feedback` + `plant_conversations` tables (migration executed)
 
 ---
 
-## What Remains (priority order)
-
-| # | Feature | Sprint origin | Status |
-|---|---|---|---|
-| 1 | **Email reminders + weekly digest** — via Resend/Sendgrid | Sprint 4 | Design discussion needed → implement |
-| 3 | **Monetisation** — Stripe freemium, scan limits, Pro gating | Sprint 6 | Not started |
-| 4 | **Observability** — Sentry full setup, funnel analytics, quota alert | Sprint 10 | Partially done |
-| 5 | **Onboarding gaps** — sample walkthrough, first-scan celebration, empty garden | Sprint 3 | Not started |
-| 6 | **UI polish** — skeleton screens, colourblind palette | Sprint 10 | Not started |
+### ✅ Sprint 13 — Push Notifications + Care Tracking
+Web Push via VAPID, global opt-in + per-plant mute in PlantDetailScreen. "Mark watered" resets countdown via `plant_care_actions`. `care-reminder` edge function runs hourly via pg_cron, sends at 8am in user's local timezone (captured at subscribe time). iOS requires PWA installed (16.4+).
 
 ---
 
-## Summary Timeline (updated)
-
-| Sprint | Focus | Status |
-|---|---|---|
-| 1 | Speed — single Gemini call | ✅ Shipped |
-| 2 | Account — magic link auth | ✅ Shipped |
-| 3 | Onboarding — first-time UX | 🔄 Partial (tour done, walkthrough + celebration pending) |
-| 4 | Retention — care reminders | 🔄 Partial (schedule data done, email reminders pending) |
-| 5 | UX — low confidence states | ✅ Shipped |
-| 6 | Monetisation — freemium | 🔄 Partial (caching done, Stripe + gates pending) |
-| 7 | Accuracy — multi-angle | ✅ Shipped |
-| 8 | Pest ID | ✅ Shipped |
-| 9 | PWA + push | ✅ Shipped |
-| 10 | Accessibility + observability | 🔄 Partial (accessibility done, observability pending) |
-| 11 | My Plants garden view | ✅ Shipped (beyond roadmap) |
-| 12a | Onboarding tour | ✅ Shipped (beyond roadmap) |
-| 12b | User feedback + Q&A | ✅ Shipped (beyond roadmap) |
+### ✅ Sprint 14 — Observability
+Sentry ErrorBoundary active (`VITE_SENTRY_DSN`). PostHog 15-event funnel (`app_opened` → `scan_submitted` → `analysis_complete` → `register_completed` → `notification_opted_in`). PlantNet quota monitor in `plant-processor` (warns ≥400/day). Fixed Gemini `nullable: true` schema bug.
 
 ---
 
-## Metrics Dashboard (track from Sprint 1)
+### ✅ Sprint 15 — Onboarding Polish
+1. **Sample result preview** — compact horizontal card above upload form on first visit; auto-hides when first photo added.
+2. **First-scan celebration** — floating leaf particles (`floatUp` keyframe) + bouncing card (`celebPop`) showing actual plant name. Tap-anywhere-to-dismiss, 3.5s auto-dismiss.
+3. **Empty garden redesign** — fan of 3 overlapping photo cards (dark/mid/light gradients, rotated at −14°/+10°/−2°).
+
+---
+
+### ✅ Sprint 16 — AI Enrichments + UX Polish + Voice Q&A
+1. **AI enrichments** — `toxicity`, `light_intensity_analysis`, `seasonal_context`, `vital_signs` wired through Gemini → DB → UI. Migration `sprint16_enrichments.sql` executed.
+2. **Vital Signs meters** — 4-row progress bar panel (teal/amber/red by score; pest_risk inverted).
+3. **Toxicity/Safety card** — per-species cat/dog/human risk with colour-coded pills.
+4. **Environment card** — light intensity analysis + seasonal care note.
+5. **Colourblind-safe palette** — `healthCategoryToColor()` changed to teal/amber/red; `--healthy` CSS var updated.
+6. **HistoryScreen skeleton** — 4-card shimmer grid replaces loading spinner.
+7. **Voice Q&A** — 🎤 mic button, Web Speech API, language-aware, pulsing teal animation. Confirmed working in production.
+
+---
+
+### ✅ Sprint 17 — Weekly Email Digest
+Registered users receive a weekly garden digest every Sunday at 8am UTC via Brevo transactional email API. Content: plant health status, watering countdown, pest alerts. Opt-out only with one-click unsubscribe. `email_digest_opt_out` column on `users` table. `weekly-digest` edge function deployed.
+
+---
+
+### ✅ Sprint 18 — Final UX Polish
+1. **Growth narratives** — Gemini writes 1–2 warm, specific sentences comparing current and previous scan. Stored in `plant_logs.growth_milestones.narrative`. Shown in Health Journey card.
+2. **Correction re-run skeleton** — All result content hidden during re-analysis; 4 skeleton shimmer cards shown instead of stale data.
+3. **Care reminder nudge** — "🔔 Set watering reminders in My Garden →" pill button at bottom of Care Schedule section in ResultsScreen.
+
+---
+
+## Future Enhancements (post v1.0)
+
+These are not planned sprints — they are candidate improvements if the app grows or user feedback drives them.
+
+| Enhancement | Notes |
+|---|---|
+| **Monetisation** | Stripe freemium, scan usage limit, Pro gating — deliberately excluded from v1.0 |
+| **Growth timeline visualisation** | Chart or timeline of health scores across scans per plant |
+| **Community plant library** | Shared identification database from anonymised scan data |
+| **Offline scan queue** | Queue scans when offline; submit when connection returns |
+| **Apple/Google sign-in** | Reduce friction vs magic link for mobile users |
+| **PlantNet quota upgrade** | Paid PlantNet plan for >500 req/day if traffic demands it |
+
+---
+
+## Metrics (track in PostHog)
 
 | Metric | Target |
 |---|---|
@@ -171,6 +198,5 @@ A state-of-the-art plant intelligence companion for home gardeners — accurate 
 | Scan success rate (pending → done) | > 98% |
 | First-scan completion rate | > 70% |
 | 30-day retention | > 40% |
-| Pro conversion rate | > 5% |
 | PlantNet quota utilisation | < 70%/day |
-| Identification accuracy (curated test set) | > 85% |
+| Identification accuracy | > 85% |
