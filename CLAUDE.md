@@ -32,7 +32,7 @@ Read from `credentials.env.txt` in project root (never commit this file).
 - `PLANTNET_API_KEY`
 - `VAPID_PUBLIC_KEY` — BNrFg1TOhvBK6EcICaGrzxDmVL-7OGGlLSW4_qPxuHANqFANVLlw8NvR-yUTOunfZ9pJITh2bjUOmtP95iDPPLc (set as Supabase secret)
 - `VAPID_PRIVATE_KEY` — (set as Supabase secret, value in credentials.env.txt)
-- `VAPID_SUBJECT` — mailto:poornima.budda@gmail.com (set as Supabase secret)
+- `VAPID_SUBJECT` — mailto:botaniqsupport@gmail.com (set as Supabase secret)
 - `RESEND_API_KEY` — (set as Supabase secret; get from resend.com dashboard)
 - `RESEND_FROM_EMAIL` — e.g. `BotanIQ <digest@yourdomain.com>` (set as Supabase secret; domain must be verified in Resend)
 - `APP_URL` — `https://plant-health-diagnosis.vercel.app` (set as Supabase secret — used in digest email links)
@@ -183,6 +183,27 @@ RLS: `plant_logs` — anon insert + select + delete (by user_id). `users` — an
 
 ---
 
+## Security Enhancements
+
+To move from a production MVP to a hardened application, the following security improvements are recommended:
+
+| Area | Fix Required | Priority |
+|---|---|---|
+| **Credential Sanitization** | ✅ Done — personal email removed from docs; update `VAPID_SUBJECT` Supabase secret to use a generic support alias (e.g., `support@yourdomain.com`). | High |
+| **Edge Function Security** | ✅ Done — `plant-processor` now guards on `pending` status before processing; `care-reminder` deployed without `--no-verify-jwt`. `weekly-digest` retains `--no-verify-jwt` (public unsubscribe endpoint). | High |
+| **Email Privacy** | ✅ Done — unsubscribe URL in `weekly-digest` is now HMAC-SHA256 signed (`UNSUBSCRIBE_SECRET`). Signature verified before accepting opt-out. Old unsigned links return 403. | Medium |
+| **Access Control** | ✅ Done (authenticated users) — `plant_logs` RLS now uses `auth.uid()::text = user_id` for `authenticated` role. Anon/guest rows remain open; full guest isolation requires Anonymous Auth migration (future work). Migration: `security_rls_plant_logs.sql`. | Medium |
+| **Frontend Logging** | ✅ Done — `window.__plantLogger` gated to `import.meta.env.DEV` only. Not exposed in production builds. | Low |
+| **Infrastructure** | ✅ Done (deferred) — project ref is documentation-only; no runtime risk. Acceptable as-is for a single-project setup. | Low |
+
+### Implementation Notes:
+1. ✅ **Harden `plant-processor`**: Status guard added — returns 404 if record not found, 409 if not `pending`.
+2. ✅ **Secure Unsubscribe**: HMAC-SHA256 signed unsubscribe URLs via `UNSUBSCRIBE_SECRET` Supabase secret.
+3. ✅ **Cleanse Repository**: Personal email removed from CLAUDE.md.
+4. ✅ **Tighten RLS**: `plant_logs` authenticated users scoped to `auth.uid()`. Full guest isolation deferred (requires Anonymous Auth migration).
+
+---
+
 ## Sprints Completed
 
 | Sprint | Feature |
@@ -222,30 +243,40 @@ RLS: `plant_logs` — anon insert + select + delete (by user_id). `users` — an
 ## Common Commands
 
 ```powershell
-# Deploy edge functions
+# ── Deploy edge functions ──────────────────────────────────────────────────────
+# plant-processor and plant-chat: --no-verify-jwt (called from frontend, no Supabase JWT)
+# care-reminder: no flag (internal cron only — JWT verification enforced by Supabase)
+# weekly-digest: --no-verify-jwt (public unsubscribe GET endpoint must remain accessible)
 npx supabase functions deploy plant-processor --project-ref thgdxffelonamukytosq --no-verify-jwt
 npx supabase functions deploy plant-chat --project-ref thgdxffelonamukytosq --no-verify-jwt
-npx supabase functions deploy care-reminder --project-ref thgdxffelonamukytosq --no-verify-jwt
+npx supabase functions deploy care-reminder --project-ref thgdxffelonamukytosq
 npx supabase functions deploy weekly-digest --project-ref thgdxffelonamukytosq --no-verify-jwt
 
-# Set VAPID secrets in Supabase (run once after generating keys)
+# ── Supabase secrets (run once per environment) ────────────────────────────────
+# VAPID keys for Web Push notifications
 npx supabase secrets set VAPID_PUBLIC_KEY="BNrFg1TOhvBK6EcICaGrzxDmVL-7OGGlLSW4_qPxuHANqFANVLlw8NvR-yUTOunfZ9pJITh2bjUOmtP95iDPPLc" --project-ref thgdxffelonamukytosq
 npx supabase secrets set VAPID_PRIVATE_KEY="<from credentials.env.txt>" --project-ref thgdxffelonamukytosq
-npx supabase secrets set VAPID_SUBJECT="mailto:poornima.budda@gmail.com" --project-ref thgdxffelonamukytosq
+npx supabase secrets set VAPID_SUBJECT="mailto:botaniqsupport@gmail.com" --project-ref thgdxffelonamukytosq
 
-# Set Resend secrets for weekly digest (Sprint 17)
-npx supabase secrets set RESEND_API_KEY="<from resend.com dashboard>" --project-ref thgdxffelonamukytosq
-npx supabase secrets set RESEND_FROM_EMAIL="BotanIQ <digest@yourdomain.com>" --project-ref thgdxffelonamukytosq
+# Weekly digest email (Brevo)
+npx supabase secrets set BREVO_API_KEY="<from credentials.env.txt>" --project-ref thgdxffelonamukytosq
+npx supabase secrets set RESEND_FROM_EMAIL="BotanIQ <botaniqsupport@gmail.com>" --project-ref thgdxffelonamukytosq
 npx supabase secrets set APP_URL="https://plant-health-diagnosis.vercel.app" --project-ref thgdxffelonamukytosq
 
-# Check recent scans
+# HMAC secret for tamper-proof unsubscribe links (generate a new value with openssl rand -hex 32)
+npx supabase secrets set UNSUBSCRIBE_SECRET="<32-byte hex from openssl rand -hex 32>" --project-ref thgdxffelonamukytosq
+
+# ── Check recent scans ─────────────────────────────────────────────────────────
 $h = @{ "apikey" = "<SERVICE_ROLE_KEY>"; "Authorization" = "Bearer <SERVICE_ROLE_KEY>" }
 Invoke-RestMethod "https://thgdxffelonamukytosq.supabase.co/rest/v1/plant_logs?select=id,status,PlantName,AccuracyScore,created_at&order=created_at.desc&limit=20" -Headers $h | Format-Table
 
-# Force Vercel redeploy
+# ── Check weekly-digest cron job ───────────────────────────────────────────────
+Invoke-RestMethod "https://thgdxffelonamukytosq.supabase.co/rest/v1/rpc/cron_job_list" -Headers $h
+
+# ── Force Vercel redeploy ──────────────────────────────────────────────────────
 npx vercel --prod --yes
 
-# Verify live deploy
+# ── Verify live deploy ─────────────────────────────────────────────────────────
 curl -s https://plant-health-diagnosis.vercel.app | grep title
 ```
 

@@ -8,10 +8,32 @@ const supabase = createClient(
 const BREVO_API_KEY = Deno.env.get('BREVO_API_KEY')!
 const FROM_EMAIL = Deno.env.get('RESEND_FROM_EMAIL') ?? 'BotanIQ <botaniqsupport@gmail.com>'
 const APP_URL = Deno.env.get('APP_URL') ?? 'https://plant-health-diagnosis.vercel.app'
+const UNSUBSCRIBE_SECRET = Deno.env.get('UNSUBSCRIBE_SECRET') ?? ''
 
-function unsubscribeUrl(userId: string): string {
+// ── HMAC-SHA256 helpers for tamper-proof unsubscribe links ──────────────────
+// Signs the user_id so the unsubscribe URL can't be used to opt-out arbitrary users.
+async function hmacSign(data: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(UNSUBSCRIBE_SECRET),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  )
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data))
+  return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+async function hmacVerify(data: string, signature: string): Promise<boolean> {
+  const expected = await hmacSign(data)
+  if (expected.length !== signature.length) return false
+  // Constant-time comparison prevents timing attacks
+  let diff = 0
+  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ signature.charCodeAt(i)
+  return diff === 0
+}
+
+async function signedUnsubscribeUrl(userId: string): Promise<string> {
+  const sig = await hmacSign(userId)
   const base = Deno.env.get('SUPABASE_URL')!
-  return `${base}/functions/v1/weekly-digest?action=unsubscribe&user_id=${encodeURIComponent(userId)}`
+  return `${base}/functions/v1/weekly-digest?action=unsubscribe&user_id=${encodeURIComponent(userId)}&sig=${sig}`
 }
 
 function unsubscribeHtml(): string {
@@ -48,7 +70,8 @@ function buildEmailHtml(
     waterStatus: string | null
     pest_detected: boolean | null
     pest_name: string | null
-  }>
+  }>,
+  unsubscribeLink: string
 ): string {
   const greeting = user.first_name ? `Hi ${user.first_name}` : 'Hi there'
 
@@ -130,7 +153,7 @@ function buildEmailHtml(
               </table>
               <p style="margin:28px 0 0;font-size:12px;color:#9ca3af;text-align:center;line-height:1.6;">
                 You're receiving this because you have a BotanIQ account.<br>
-                <a href="${unsubscribeUrl(user.id)}" style="color:#9ca3af;">Unsubscribe</a>
+                <a href="${unsubscribeLink}" style="color:#9ca3af;">Unsubscribe</a>
               </p>
             </td>
           </tr>
@@ -148,7 +171,12 @@ Deno.serve(async (req) => {
   // ── Unsubscribe (GET) ───────────────────────────────────────────────────────
   if (req.method === 'GET' && url.searchParams.get('action') === 'unsubscribe') {
     const userId = url.searchParams.get('user_id')
-    if (!userId) return new Response('Missing user_id', { status: 400 })
+    const sig    = url.searchParams.get('sig')
+    if (!userId || !sig) return new Response('Missing parameters', { status: 400 })
+    if (!UNSUBSCRIBE_SECRET) return new Response('Unsubscribe not configured', { status: 503 })
+
+    const valid = await hmacVerify(userId, sig)
+    if (!valid) return new Response('Invalid or expired unsubscribe link', { status: 403 })
 
     const { error } = await supabase
       .from('users')
@@ -264,7 +292,8 @@ Deno.serve(async (req) => {
 
     if (!userPlants.length) return
 
-    const html = buildEmailHtml(user, userPlants)
+    const unsubscribeLink = await signedUnsubscribeUrl(user.id)
+    const html = buildEmailHtml(user, userPlants, unsubscribeLink)
     const subject = userPlants.length === 1
       ? `Your ${userPlants[0].identity} update — BotanIQ`
       : `Your ${userPlants.length} plants this week — BotanIQ`

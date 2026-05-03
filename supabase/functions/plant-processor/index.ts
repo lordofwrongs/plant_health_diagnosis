@@ -337,6 +337,25 @@ serve(async (req: Request) => {
   const PLANTNET_KEY = Deno.env.get('PLANTNET_API_KEY') ?? ''
 
   const logger = createLogger(record_id)
+
+  // Guard: reject requests for records that don't exist or aren't in 'pending' state.
+  // Prevents replay attacks, double-processing, and processing of already-completed scans.
+  const { data: guard, error: guardErr } = await supabase
+    .from('plant_logs')
+    .select('status')
+    .eq('id', record_id)
+    .maybeSingle()
+  if (guardErr || !guard) {
+    return new Response(JSON.stringify({ error: 'Record not found' }), {
+      status: 404, headers: { 'Content-Type': 'application/json' },
+    })
+  }
+  if (guard.status !== 'pending') {
+    return new Response(JSON.stringify({ error: `Record is not in pending state (current: ${guard.status})` }), {
+      status: 409, headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
   logger.info('init', `Pipeline started — ${image_url}`)
 
   try {

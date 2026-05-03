@@ -59,5 +59,5 @@ export const logger = {
   },
 }
 
-// Expose on window so support staff can run logger.dump() from the browser console
-if (typeof window !== 'undefined') window.__plantLogger = logger
+// Expose on window in dev only — use Sentry/PostHog for production diagnostics
+if (typeof window !== 'undefined' && import.meta.env.DEV) window.__plantLogger = logger
