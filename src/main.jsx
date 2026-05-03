@@ -15,7 +15,7 @@ if (import.meta.env.VITE_SENTRY_DSN) {
 
 if (import.meta.env.VITE_POSTHOG_KEY) {
   posthog.init(import.meta.env.VITE_POSTHOG_KEY, {
-    api_host: '/ph',
+    api_host: '/api/ph',
     ui_host: 'https://us.posthog.com',
     capture_pageview: false,
     autocapture: false,
