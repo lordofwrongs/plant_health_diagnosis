@@ -109,7 +109,8 @@ async function callGemini(
   stage: string,
   temperature = 0.1,
   timeoutMs = 35000,
-  extraImages: Array<{base64: string; mimeType: string}> = []
+  extraImages: Array<{base64: string; mimeType: string}> = [],
+  responseSchema?: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
   const res = await fetchWithRetry(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
@@ -128,6 +129,7 @@ async function callGemini(
         }],
         generationConfig: {
           responseMimeType: 'application/json',
+          responseSchema: responseSchema,
           temperature,
           // Disable thinking mode — adds 2-4s latency for no benefit on structured JSON tasks
           thinkingConfig: { thinkingBudget: 0 },
@@ -320,6 +322,11 @@ async function computeImageHash(bytes: Uint8Array): Promise<string> {
 serve(async (req: Request) => {
   const { record } = await req.json()
   const { image_url, id: record_id, plant_nickname: nickname, user_id } = record
+  // user_correction is set only on correction re-runs (thumbs-down flow)
+  const userCorrection: string | null =
+    typeof record.user_correction === 'string' && record.user_correction.trim()
+      ? record.user_correction.trim()
+      : null
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
@@ -381,9 +388,24 @@ serve(async (req: Request) => {
     logger.startTimer('stage1_parallel')
     const threshold = 0.0001
 
+    // For correction re-runs, fetch prior PlantNet candidates from the existing record
+    // instead of calling PlantNet again — the image hasn't changed, result would be identical
+    let correctionCandidates: Array<{ name: string; common: string; score: number }> = []
+    if (userCorrection) {
+      const { data: existingLog } = await supabase
+        .from('plant_logs')
+        .select('plantnet_candidates')
+        .eq('id', record_id)
+        .single()
+      correctionCandidates = existingLog?.plantnet_candidates ?? []
+      logger.info('correction_rerun', `User correction: "${userCorrection}", prior candidates: ${correctionCandidates.length}`)
+    }
+
     const [plantNet, nearbyResult, weatherSnippet] = await Promise.all([
-      // 1a. PlantNet — cache-aware: check plantnet_cache first, call API on miss
+      // 1a. PlantNet — skipped on correction re-runs (image unchanged, result would be identical)
       (async () => {
+        if (userCorrection) return null  // skip — use correctionCandidates instead
+
         const { data: cached } = await supabase
           .from('plantnet_cache')
           .select('result')
@@ -393,6 +415,19 @@ serve(async (req: Request) => {
         if (cached?.result) {
           logger.info('plantnet', `Cache hit for hash ${imageHash.slice(0, 8)}…`)
           return cached.result as PlantNetResult
+        }
+
+        // Count today's API calls (cache inserts = quota consumed; resets midnight UTC)
+        const todayUTC = new Date()
+        todayUTC.setUTCHours(0, 0, 0, 0)
+        const { count: dailyCalls } = await supabase
+          .from('plantnet_cache')
+          .select('*', { count: 'exact', head: true })
+          .gte('created_at', todayUTC.toISOString())
+        const callsToday = dailyCalls ?? 0
+        logger.info('plantnet_quota', `Daily calls: ${callsToday}/500`)
+        if (callsToday >= 400) {
+          logger.warn('plantnet_quota', `QUOTA_WARNING: ${callsToday}/500 used — ${500 - callsToday} remaining today`)
         }
 
         const fresh = await identifyWithPlantNet(PLANTNET_KEY, imageBytes, imageMimeType, 'leaf', logger)
@@ -447,7 +482,31 @@ serve(async (req: Request) => {
     const useCrossValidate = plantNet !== null && plantNet.score >= 20 && plantNet.score < 85
 
     let identSection: string
-    if (useGroundTruth) {
+    if (userCorrection) {
+      // Correction re-run: user directly examined the plant and provided a name.
+      // Their correction is the top candidate; prior PlantNet results are additional hints.
+      // Gemini still does its own independent ID first (anti-anchoring), then reconciles.
+      const candidateList = [
+        `1. "${userCorrection}" — User correction (user directly examined this plant)`,
+        ...correctionCandidates.slice(0, 2).map((c, i) =>
+          `${i + 2}. ${c.name} (${c.common || '—'}) — Prior PlantNet ${c.score}%`
+        ),
+      ].join('\n')
+      identSection =
+        `CORRECTION RE-RUN — The user has directly examined this plant and believes it is: "${userCorrection}"\n\n` +
+        `CROSS-VALIDATION TASK — follow these three steps strictly in order:\n\n` +
+        `Step 1 — YOUR INDEPENDENT ID (complete this before reading the candidates below):\n` +
+        `Look ONLY at the visual evidence in the photo: leaf shape and lobe depth, how the petiole ` +
+        `attaches, leaf texture, venation pattern, stem cross-section, and growth habit. ` +
+        `Commit to a species name. Set independent_id to YOUR answer. ` +
+        `Do NOT be anchored by the candidates listed below.\n\n` +
+        `Step 2 — USER CORRECTION + PRIOR SPECIALIST CANDIDATES (treat as strong hints):\n` +
+        `${candidateList}\n\n` +
+        `Step 3 — RECONCILE: Compare your Step 1 answer with the candidates above.\n` +
+        `If your answer matches the user correction → set agrees_with_specialist=true and final_scientific_name accordingly.\n` +
+        `If your answer matches a PlantNet candidate → set agrees_with_specialist=true and use that species.\n` +
+        `If your answer differs from all → set agrees_with_specialist=false and use YOUR Step 1 answer.`
+    } else if (useGroundTruth) {
       identSection =
         `SPECIES CONFIRMED (PlantNet ${plantNet!.score}% confidence): ` +
         `"${plantNet!.scientificName}" (${plantNet!.commonName}, family ${plantNet!.family}). ` +
@@ -482,6 +541,64 @@ serve(async (req: Request) => {
     }
 
     const regionalContext = getRegionalContext(log.location_name)
+
+    const PLANT_ANALYSIS_SCHEMA = {
+      type: "object",
+      properties: {
+        is_analyzable: { type: "boolean" },
+        photo_tip: { type: ["string", "null"] },
+        organ: { type: "string" },
+        independent_id: { type: "string" },
+        agrees_with_specialist: { type: "boolean" },
+        visual_features: { type: "string" },
+        display_name: { type: "string" },
+        final_scientific_name: { type: "string" },
+        vernacular_names: {
+          type: "object",
+          properties: {
+            english: { type: "string" },
+            hindi: { type: "string" },
+            tamil: { type: "string" },
+            telugu: { type: "string" }
+          }
+        },
+        health_category: { type: "string", enum: ["healthy", "fair", "critical"] },
+        health_status: { type: "string" },
+        analysis: { type: "string" },
+        toxicity: {
+          type: "object",
+          properties: {
+            risk_cats: { type: "string" },
+            risk_dogs: { type: "string" },
+            risk_humans: { type: "string" },
+            notes: { type: "string" }
+          }
+        },
+        light_intensity_analysis: { type: "string" },
+        seasonal_context: { type: "string" },
+        recovery_steps: { type: "array", items: { type: "string" } },
+        pro_tip: { type: "string" },
+        weather_alert: { type: ["string", "null"] },
+        care_schedule: {
+          type: "object",
+          properties: {
+            water_every_days: { type: "number" },
+            fertilise_every_days: { type: "number" },
+            check_pests_every_days: { type: "number" },
+            notes: { type: ["string", "null"] }
+          }
+        },
+        pest_detected: { type: "boolean" },
+        pest_name: { type: ["string", "null"] },
+        pest_treatment: { type: ["array", "null"], items: { type: "string" } }
+      },
+      required: [
+        "is_analyzable", "independent_id", "final_scientific_name", 
+        "display_name", "health_category", "health_status", 
+        "analysis", "recovery_steps", "pro_tip", "care_schedule", 
+        "pest_detected", "toxicity", "light_intensity_analysis"
+      ]
+    };
 
     const multiAngleHeader = allImageData.length > 1
       ? `MULTI-ANGLE ANALYSIS: ${allImageData.length} photos of the same plant have been provided.\n` +
@@ -531,48 +648,15 @@ STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
 2. HEALTH ASSESSMENT: Analyse leaf colour, turgor, spots, wilting, soil condition. Write like you are explaining to a friend who loves gardening but has no scientific background — warm, clear, jargon-free.
 3. health_category MUST be exactly one of: "healthy", "fair", or "critical" (English, always).
 4. health_status MUST be a SHORT badge label (2-4 words max) in ${userLang} — e.g. "Healthy", "Needs Attention", "Stressed", "Critical Condition". Never a full sentence.
-5. REGIONAL NAMES: Use traditional names used by locals — not literal translations.
-6. USER LANGUAGE: All user-facing text (except health_category) in ${userLang}.
-7. weather_alert: Only if weather data indicates genuine risk. Otherwise null.
-8. CARE STEPS: Make each step concrete and actionable. Factor current weather conditions into recommendations — if rainfall has been low, emphasise watering frequency or mulching; if peak temperatures are high, advise on shade cloth or watering timing; if rain has been heavy, flag drainage and fungal risk. When recommending fertilisers, sprays, or soil treatments, name the product TYPE (e.g. "liquid seaweed fertiliser", "balanced granular fertiliser (NPK)", "neem oil spray", "compost or well-rotted manure"). Never mention specific brand names.
-9. PRO TIP: A single practical tip combining the plant's current needs with the actual weather forecast — reference rain and temperature data specifically. Only name the location if it is known and confirmed.
-10. CARE SCHEDULE: Generate realistic care frequencies for this specific plant. Factor rainfall into water_every_days — reduce the interval if the past 7-day rain was < 5mm; increase it if > 20mm. notes is optional: one concise sentence for a care tip not already in recovery_steps, or null.
-11. PEST DETECTION: Examine the photo(s) closely for signs of pest damage — holes in leaves, webbing, sticky residue, yellowing patches, tunnelling, or visible insects/larvae. If clear pest signs are present, set pest_detected=true, identify the pest in pest_name, and provide 3-5 specific treatment steps in pest_treatment (name product types only, no brand names). If no evidence of pests, set pest_detected=false and pest_name/pest_treatment to null.
-
-RESPOND WITH THIS EXACT JSON (no markdown fences):
-{
-  "is_analyzable": true,
-  "photo_tip": null,
-  "organ": "leaf",
-  "independent_id": "Scientific name from YOUR own visual analysis",
-  "agrees_with_specialist": true,
-  "visual_features": "One plain-English sentence describing what you see — leaf shape and colour, stem type, how it grows. No botanical jargon.",
-  "display_name": "Most culturally relatable name in ${userLang}",
-  "final_scientific_name": "Genus species (reconciled winner)",
-  "vernacular_names": {
-    "english": "Common English name",
-    "hindi": "Traditional Hindi name",
-    "tamil": "Traditional Tamil name or None",
-    "telugu": "Traditional Telugu name or None"
-  },
-  "health_category": "healthy",
-  "health_status": "Healthy",
-  "analysis": "Plain-language health assessment in ${userLang} — what you see, what it means, written warmly for a home gardener.",
-  "recovery_steps": ["Concrete action in ${userLang}. Name the product type if a treatment is needed — no brand names."],
-  "pro_tip": "A practical, location-specific tip for ${log.location_name !== 'Unknown Location' ? log.location_name : 'home gardeners'} in ${userLang}. Do not mention South Asia unless location confirms it.",
-  "weather_alert": null,
-  "care_schedule": {
-    "water_every_days": 3,
-    "fertilise_every_days": 14,
-    "check_pests_every_days": 7,
-    "notes": null
-  },
-  "pest_detected": false,
-  "pest_name": null,
-  "pest_treatment": null
-}`,
+5. TOXICITY: Assess safety for cats, dogs, and humans.
+6. LIGHT & SEASON: Analyze light from shadows and provide seasonal care context for ${new Date().toLocaleString('default', { month: 'long' })} in the ${log.latitude > 0 ? 'Northern' : 'Southern'} hemisphere.
+7. REGIONAL NAMES: Use traditional names used by locals — not literal translations.
+8. USER LANGUAGE: All user-facing text (except health_category) in ${userLang}.
+9. weather_alert: Only if weather data indicates genuine risk. Otherwise null.
+10. CARE STEPS: Concrete actions in ${userLang}. Name product types, no brands.
+11. PEST DETECTION: Holes, webbing, or visible insects.`,
       imageBase64, imageMimeType, logger, 'stage2_analysis',
-      0.1, 45000, extraImages
+      0.1, 45000, extraImages, PLANT_ANALYSIS_SCHEMA
     )
 
     logger.endTimer('stage2_analysis')
@@ -600,7 +684,10 @@ RESPOND WITH THIS EXACT JSON (no markdown fences):
     const finalId      = String(result.final_scientific_name ?? result.independent_id ?? '')
 
     let finalScore: number
-    if (useGroundTruth) {
+    if (userCorrection) {
+      // Correction re-run: if Gemini agrees with user → 83%; if Gemini overrides → 60%
+      finalScore = geminiAgrees ? 83 : 60
+    } else if (useGroundTruth) {
       // PlantNet ≥ 85% + Gemini confirmed → very high confidence
       finalScore = 93
     } else if (useCrossValidate && geminiAgrees) {

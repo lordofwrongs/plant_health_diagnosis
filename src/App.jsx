@@ -6,6 +6,7 @@ import HistoryScreen from './components/HistoryScreen.jsx'
 import PlantDetailScreen from './components/PlantDetailScreen.jsx'
 import RegisterModal from './components/RegisterModal.jsx'
 import { supabase } from './supabaseClient.js'
+import { track, identify } from './utils/analytics.js'
 
 // ── BotanIQ logo mark + wordmark ─────────────────────────────────────────────
 function BotanIQMark({ size = 32 }) {
@@ -42,6 +43,10 @@ export default function App() {
     }
   }, [])
 
+  useEffect(() => {
+    track('app_opened', { is_returning: !!localStorage.getItem('botaniq_first_scan') })
+  }, [])
+
   // Handle Supabase Auth session — fires on magic link callback and on returning visits
   const handleAuthSession = useCallback(async (session) => {
     const user    = session.user
@@ -73,6 +78,8 @@ export default function App() {
       guest_id:   guestId !== authId ? guestId : null,
     }, { onConflict: 'id' })
 
+    identify(authId, { email: user.email })
+    if (!localStorage.getItem('botaniq_registered')) track('register_completed')
     localStorage.setItem('botaniq_registered', 'true')
     setShowRegisterModal(false)
   }, [])
@@ -109,6 +116,12 @@ export default function App() {
     setResult(data)
     setHistoryContext([])
     setScreen('results')
+    track('analysis_complete', {
+      plant_name: data.PlantName,
+      accuracy_score: data.AccuracyScore,
+      health_status: data.HealthStatus,
+      is_first_scan: !localStorage.getItem('botaniq_first_scan'),
+    })
 
     const isFirst = !localStorage.getItem('botaniq_first_scan')
     if (isFirst) {
@@ -117,9 +130,13 @@ export default function App() {
       // Show celebration for 2.5s then show register modal if not yet registered
       setTimeout(() => {
         setShowCelebration(false)
-        if (!localStorage.getItem('botaniq_registered')) setShowRegisterModal(true)
+        if (!localStorage.getItem('botaniq_registered')) {
+          track('register_modal_shown', { trigger: 'first_scan' })
+          setShowRegisterModal(true)
+        }
       }, 2500)
     } else if (!localStorage.getItem('botaniq_registered')) {
+      track('register_modal_shown', { trigger: 'repeat' })
       setShowRegisterModal(true)
     }
   }
@@ -133,6 +150,7 @@ export default function App() {
   }
 
   const handleAnalysisError = () => {
+    track('analysis_failed')
     setActiveLogId(null)
     setResult(null)
     setScreen('upload')
@@ -220,7 +238,7 @@ export default function App() {
       {showRegisterModal && (
         <RegisterModal
           onComplete={() => setShowRegisterModal(false)}
-          onSkip={() => setShowRegisterModal(false)}
+          onSkip={() => { track('register_skipped'); setShowRegisterModal(false) }}
         />
       )}
 

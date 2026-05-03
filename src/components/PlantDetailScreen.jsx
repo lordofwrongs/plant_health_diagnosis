@@ -1,6 +1,16 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient.js'
 import { logger } from '../logger.js'
+import { track } from '../utils/analytics.js'
+import {
+  isPushSupported,
+  getCurrentSubscription,
+  subscribeToPush,
+  unsubscribeFromPush,
+  isMutedForPlant,
+  muteForPlant,
+  unmuteForPlant,
+} from '../utils/pushNotifications.js'
 
 function friendlyError(errorDetails) {
   if (!errorDetails) return 'Analysis failed. Tap Retry to try again.'
@@ -17,18 +27,138 @@ export default function PlantDetailScreen({ group, onBack, onSelectScan, onRetak
   const [localScans, setLocalScans] = useState(group.scans)
   const [retrying, setRetrying] = useState({})
   const [confirming, setConfirming] = useState(false)
+  const [qaCountMap, setQaCountMap] = useState({})
+
+  // Care actions
+  const [lastWateredAt, setLastWateredAt] = useState(null)
+  const [justWatered, setJustWatered] = useState(false)
+
+  // Push notifications
+  const [pushSupported, setPushSupported] = useState(false)
+  const [isSubscribed, setIsSubscribed] = useState(false)
+  const [isMuted, setIsMuted] = useState(false)
+  const [isSubscribing, setIsSubscribing] = useState(false)
+  const [reminderError, setReminderError] = useState(null)
 
   const sortedScans = [...localScans].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
   const latest = sortedScans[0]
+  const userId = latest?.user_id
+  const plantId = group.id  // plant identity key — same as group.nickname
 
+  // Q&A counts
+  useEffect(() => {
+    const scanIds = group.scans.filter(s => s.status === 'done').map(s => s.id)
+    if (scanIds.length === 0) return
+    supabase
+      .from('plant_conversations')
+      .select('log_id, messages')
+      .in('log_id', scanIds)
+      .then(({ data }) => {
+        if (!data) return
+        const map = {}
+        data.forEach(row => {
+          const turns = (row.messages || []).filter(m => m.role === 'user').length
+          if (turns > 0) map[row.log_id] = turns
+        })
+        setQaCountMap(map)
+      })
+  }, [group.scans])
+
+  // Last-watered date + push state
+  useEffect(() => {
+    if (!userId) return
+
+    // Fetch most recent watered action for this plant
+    supabase
+      .from('plant_care_actions')
+      .select('actioned_at')
+      .eq('user_id', userId)
+      .eq('plant_name', plantId)
+      .eq('action_type', 'watered')
+      .order('actioned_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => { if (data) setLastWateredAt(new Date(data.actioned_at)) })
+
+    if (!isPushSupported()) return
+    setPushSupported(true)
+
+    ;(async () => {
+      try {
+        const sub = await getCurrentSubscription()
+        if (!sub) return
+        setIsSubscribed(true)
+        const muted = await isMutedForPlant(userId, plantId)
+        setIsMuted(muted)
+      } catch (err) {
+        logger.error('PlantDetailScreen', `Push state check failed: ${err.message}`)
+      }
+    })()
+  }, [userId, plantId])
+
+  // Water badge — recalculates when lastWateredAt or justWatered changes
   const waterBadge = (() => {
     const sched = latest?.care_schedule
     if (!sched?.water_every_days) return null
-    const next = new Date(latest.created_at).getTime() + sched.water_every_days * 86400000
+    const baseDate = justWatered ? new Date() : (lastWateredAt ?? new Date(latest.created_at))
+    const next = baseDate.getTime() + sched.water_every_days * 86400000
     const days = Math.ceil((next - Date.now()) / 86400000)
     const label = days <= 0 ? 'Water today' : days === 1 ? 'Water tomorrow' : `Water in ${days}d`
     return { label, urgent: days <= 0 }
   })()
+
+  // ── Handlers ─────────────────────────────────────────────────────────────
+
+  const handleMarkWatered = async () => {
+    if (!userId || justWatered) return
+    setJustWatered(true)
+    setLastWateredAt(new Date())
+    await supabase.from('plant_care_actions').insert({
+      user_id: userId,
+      plant_name: plantId,
+      action_type: 'watered',
+    })
+    track('care_action_logged', { action_type: 'watered' })
+  }
+
+  const handleSubscribe = async () => {
+    if (!userId || isSubscribing) return
+    setIsSubscribing(true)
+    setReminderError(null)
+    try {
+      await subscribeToPush(userId)
+      setIsSubscribed(true)
+      track('notification_opted_in')
+    } catch (err) {
+      if (err.message === 'Permission denied') {
+        setReminderError('Notifications blocked — enable them in your browser settings.')
+      } else {
+        setReminderError('Could not set up reminders. Try again.')
+        logger.error('PlantDetailScreen', `Subscribe failed: ${err.message}`)
+      }
+    } finally {
+      setIsSubscribing(false)
+    }
+  }
+
+  const handleUnsubscribe = async () => {
+    if (!userId) return
+    await unsubscribeFromPush(userId)
+    setIsSubscribed(false)
+    setIsMuted(false)
+    track('notification_opted_out')
+  }
+
+  const handleToggleMute = async () => {
+    if (!userId) return
+    if (isMuted) {
+      await unmuteForPlant(userId, plantId)
+      setIsMuted(false)
+    } else {
+      await muteForPlant(userId, plantId)
+      setIsMuted(true)
+    }
+  }
 
   const handleRetry = async (e, scan) => {
     e.stopPropagation()
@@ -49,13 +179,12 @@ export default function PlantDetailScreen({ group, onBack, onSelectScan, onRetak
   const handleDeleteAll = async () => {
     const ids = localScans.map(s => s.id)
     const { error } = await supabase.from('plant_logs').delete().in('id', ids)
-    if (!error) onGroupDeleted()
+    if (!error) { track('plant_deleted', { scan_count: ids.length }); onGroupDeleted() }
     else logger.error('PlantDetailScreen', `Delete failed: ${error.message}`)
   }
 
   return (
     <div className="fade-up" style={styles.page}>
-      {/* Back button floats over the top of the hero */}
       <button style={styles.backBtn} onClick={onBack} aria-label="Back to garden">
         ← Garden
       </button>
@@ -73,17 +202,61 @@ export default function PlantDetailScreen({ group, onBack, onSelectScan, onRetak
         </div>
       </div>
 
-      {/* Body content */}
+      {/* Body */}
       <div style={styles.body}>
-        {waterBadge && (
-          <div style={styles.careRow}>
-            <span style={{ ...styles.careBadge, ...(waterBadge.urgent ? styles.careBadgeUrgent : {}) }}>
-              💧 {waterBadge.label}
-            </span>
+
+        {/* ── Care + Reminders section ── */}
+        {(waterBadge || pushSupported) && (
+          <div style={styles.careSection}>
+
+            {waterBadge && (
+              <div style={styles.careRow}>
+                <span style={{ ...styles.careBadge, ...(waterBadge.urgent ? styles.careBadgeUrgent : {}) }}>
+                  💧 {waterBadge.label}
+                </span>
+                <button
+                  style={{ ...styles.wateredBtn, ...(justWatered ? styles.wateredBtnDone : {}) }}
+                  onClick={handleMarkWatered}
+                  disabled={justWatered}
+                  aria-label="Mark plant as watered today"
+                >
+                  {justWatered ? '✓ Logged' : 'Mark watered'}
+                </button>
+              </div>
+            )}
+
+            {pushSupported && (
+              <div style={styles.reminderRow}>
+                {!isSubscribed ? (
+                  <>
+                    <button
+                      style={{ ...styles.remindBtn, opacity: isSubscribing ? 0.6 : 1 }}
+                      onClick={handleSubscribe}
+                      disabled={isSubscribing}
+                    >
+                      {isSubscribing ? 'Setting up...' : '🔔 Remind me to water'}
+                    </button>
+                    {reminderError && <p style={styles.reminderError}>{reminderError}</p>}
+                  </>
+                ) : (
+                  <div style={styles.reminderActiveRow}>
+                    <span style={styles.reminderOnLabel}>
+                      {isMuted ? '🔕 Reminders muted' : '🔔 Reminders on'}
+                    </span>
+                    <button style={styles.muteToggleBtn} onClick={handleToggleMute}>
+                      {isMuted ? 'Unmute' : 'Mute'}
+                    </button>
+                    <button style={styles.unsubLink} onClick={handleUnsubscribe}>
+                      Turn off all
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
-        {/* Scan history */}
+        {/* ── Scan history ── */}
         <div style={styles.sectionHeaderRow}>
           <h2 style={styles.sectionTitle}>Scan History</h2>
           <span style={styles.sectionCount}>{sortedScans.length} {sortedScans.length === 1 ? 'scan' : 'scans'}</span>
@@ -103,9 +276,9 @@ export default function PlantDetailScreen({ group, onBack, onSelectScan, onRetak
                 key={scan.id}
                 style={{
                   ...styles.scanRow,
-                  ...(isClickable  ? styles.scanRowClickable : {}),
-                  ...(isError      ? styles.scanRowError     : {}),
-                  ...(isQuality    ? styles.scanRowQuality   : {}),
+                  ...(isClickable ? styles.scanRowClickable : {}),
+                  ...(isError     ? styles.scanRowError    : {}),
+                  ...(isQuality   ? styles.scanRowQuality  : {}),
                 }}
                 onClick={() => isClickable && onSelectScan(scan, sortedScans)}
                 role={isClickable ? 'button' : undefined}
@@ -119,11 +292,14 @@ export default function PlantDetailScreen({ group, onBack, onSelectScan, onRetak
                       {new Date(scan.created_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
                     </span>
                     {i === 0 && <span style={styles.latestBadge}>Latest</span>}
+                    {qaCountMap[scan.id] && (
+                      <span style={styles.qaBadge} title={`${qaCountMap[scan.id]} follow-up question${qaCountMap[scan.id] > 1 ? 's' : ''}`}>
+                        💬 {qaCountMap[scan.id]}
+                      </span>
+                    )}
                   </div>
 
-                  {isPending && (
-                    <span style={styles.scanPending}>Analysing...</span>
-                  )}
+                  {isPending && <span style={styles.scanPending}>Analysing...</span>}
                   {isDone && (
                     <div style={styles.scanStatusRow}>
                       <span style={{ ...styles.dot, background: scan.HealthColor || 'var(--leaf)' }} />
@@ -158,7 +334,7 @@ export default function PlantDetailScreen({ group, onBack, onSelectScan, onRetak
           })}
         </div>
 
-        {/* Delete plant */}
+        {/* ── Delete plant ── */}
         <div style={styles.deleteWrap}>
           {!confirming ? (
             <button style={styles.deleteBtn} onClick={() => setConfirming(true)}>
@@ -208,7 +384,6 @@ const styles = {
     letterSpacing: '0.2px',
   },
 
-  // Hero
   hero: {
     position: 'relative',
     width: '100%',
@@ -256,7 +431,6 @@ const styles = {
     color: 'rgba(255,255,255,0.9)',
   },
 
-  // Body
   body: {
     flex: 1,
     padding: '20px 20px 60px',
@@ -265,8 +439,18 @@ const styles = {
     margin: '0 auto',
   },
 
+  // ── Care + Reminders ──
+  careSection: {
+    marginBottom: '24px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
   careRow: {
-    marginBottom: '20px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    flexWrap: 'wrap',
   },
   careBadge: {
     display: 'inline-block',
@@ -281,7 +465,75 @@ const styles = {
     color: '#92400e',
     background: '#fef3c7',
   },
+  wateredBtn: {
+    padding: '6px 14px',
+    background: 'var(--mist)',
+    border: '1px solid var(--border)',
+    color: 'var(--text-2)',
+    fontSize: '12px',
+    fontWeight: '600',
+    borderRadius: 'var(--r-full)',
+    cursor: 'pointer',
+  },
+  wateredBtnDone: {
+    background: '#d1fae5',
+    borderColor: '#6ee7b7',
+    color: '#065f46',
+    cursor: 'default',
+  },
+  reminderRow: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  remindBtn: {
+    alignSelf: 'flex-start',
+    padding: '8px 18px',
+    background: 'var(--primary)',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 'var(--r-full)',
+    fontSize: '13px',
+    fontWeight: '600',
+    cursor: 'pointer',
+  },
+  reminderError: {
+    fontSize: '12px',
+    color: 'var(--critical)',
+    margin: 0,
+  },
+  reminderActiveRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    flexWrap: 'wrap',
+  },
+  reminderOnLabel: {
+    fontSize: '13px',
+    fontWeight: '600',
+    color: 'var(--mid)',
+  },
+  muteToggleBtn: {
+    padding: '4px 12px',
+    background: 'var(--mist)',
+    border: '1px solid var(--border)',
+    color: 'var(--text-2)',
+    fontSize: '12px',
+    fontWeight: '600',
+    borderRadius: 'var(--r-full)',
+    cursor: 'pointer',
+  },
+  unsubLink: {
+    background: 'none',
+    border: 'none',
+    color: 'var(--text-4)',
+    fontSize: '12px',
+    cursor: 'pointer',
+    textDecoration: 'underline',
+    padding: 0,
+  },
 
+  // ── Scan list ──
   sectionHeaderRow: {
     display: 'flex',
     justifyContent: 'space-between',
@@ -299,8 +551,6 @@ const styles = {
     color: 'var(--text-3)',
     fontWeight: '500',
   },
-
-  // Scan list
   scanList: {
     display: 'grid',
     gap: '10px',
@@ -351,6 +601,15 @@ const styles = {
     fontWeight: '600',
     color: 'var(--text-2)',
   },
+  qaBadge: {
+    fontSize: '10px',
+    fontWeight: '700',
+    color: 'var(--mid)',
+    background: 'var(--sage)',
+    borderRadius: 'var(--r-full)',
+    padding: '2px 7px',
+    letterSpacing: '0.2px',
+  },
   latestBadge: {
     fontSize: '10px',
     fontWeight: '800',
@@ -382,7 +641,6 @@ const styles = {
     lineHeight: '1.4',
     marginBottom: '6px',
   },
-
   smallBtn: {
     padding: '5px 12px',
     border: 'none',
@@ -393,14 +651,12 @@ const styles = {
   },
   retryBtn:  { background: 'var(--primary)', color: '#fff' },
   retakeBtn: { background: '#F59E0B', color: '#fff' },
-
   chevron: {
     fontSize: '22px',
     color: 'var(--border)',
     fontWeight: '300',
     flexShrink: 0,
   },
-
   dot: {
     width: '8px',
     height: '8px',
@@ -408,7 +664,7 @@ const styles = {
     flexShrink: 0,
   },
 
-  // Delete section
+  // ── Delete ──
   deleteWrap: {
     marginTop: '8px',
   },

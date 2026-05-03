@@ -13,8 +13,8 @@ GitHub: https://github.com/lordofwrongs/plant_health_diagnosis
 | Layer | Tech | Notes |
 |---|---|---|
 | Frontend | React 18 + Vite | `src/` — auto-deploys to Vercel on push to `main` |
-| Edge function | Deno (Supabase) | `supabase/functions/plant-processor/index.ts` |
-| Database | Supabase Postgres | Tables: `plant_logs`, `users`, `user_profiles`, `plantnet_cache` |
+| Edge functions | Deno (Supabase) | `plant-processor` (full AI pipeline), `plant-chat` (Q&A), `care-reminder` (hourly push notifications) |
+| Database | Supabase Postgres | Tables: `plant_logs`, `users`, `user_profiles`, `plantnet_cache`, `identification_feedback`, `plant_conversations`, `push_subscriptions`, `push_mutes`, `plant_care_actions` |
 | Storage | Supabase Storage | Bucket: `plant_images` (public) |
 | Realtime | Supabase Realtime | Channels: `log-monitor-{id}`, `history_realtime_sync` |
 | Auth | Supabase Auth | Magic link only — no passwords |
@@ -30,8 +30,11 @@ Read from `credentials.env.txt` in project root (never commit this file).
 - `SUPABASE_ANON_KEY`
 - `GEMINI_API_KEY`
 - `PLANTNET_API_KEY`
+- `VAPID_PUBLIC_KEY` — BNrFg1TOhvBK6EcICaGrzxDmVL-7OGGlLSW4_qPxuHANqFANVLlw8NvR-yUTOunfZ9pJITh2bjUOmtP95iDPPLc (set as Supabase secret)
+- `VAPID_PRIVATE_KEY` — (set as Supabase secret, value in credentials.env.txt)
+- `VAPID_SUBJECT` — mailto:poornima.budda@gmail.com (set as Supabase secret)
 
-Vercel env vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_APP_URL=https://plant-health-diagnosis.vercel.app`
+Vercel env vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_APP_URL=https://plant-health-diagnosis.vercel.app`, `VITE_VAPID_PUBLIC_KEY` (same as VAPID_PUBLIC_KEY above)
 
 ---
 
@@ -42,11 +45,16 @@ Vercel env vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_APP_URL=ht
 | `src/App.jsx` | Router, nav, auth session handler, register modal trigger |
 | `src/components/UploadScreen.jsx` | 3-slot photo upload (whole plant / leaf / stem), HEIC check, compression |
 | `src/components/AnalysingScreen.jsx` | Progress UI, Realtime + HTTP polling fallback, 90s hard timeout |
-| `src/components/ResultsScreen.jsx` | Diagnosis display: plant name, confidence, health, care schedule, pest card |
+| `src/components/ResultsScreen.jsx` | Diagnosis display + thumbs-down correction modal + Q&A collapsible section (3-turn limit) |
 | `src/components/HistoryScreen.jsx` | My Garden grid — 2-column photo grid, groups scans by plant, Realtime subscription |
-| `src/components/PlantDetailScreen.jsx` | Per-plant detail: hero banner, scan history timeline, retry/delete, watering badge |
+| `src/components/PlantDetailScreen.jsx` | Per-plant detail: hero banner, scan history timeline, retry/delete, watering badge, Q&A indicator |
 | `src/components/RegisterModal.jsx` | Soft registration modal — magic link OTP, skip option |
-| `supabase/functions/plant-processor/index.ts` | Full AI pipeline: PlantNet → Gemini cross-validate → DB update |
+| `supabase/functions/plant-processor/index.ts` | Full AI pipeline: PlantNet → Gemini cross-validate → DB update. Supports correction re-run via `user_correction` field. |
+| `supabase/functions/plant-chat/index.ts` | Lightweight Q&A: takes plant context from `plant_logs`, calls Gemini, stores in `plant_conversations` |
+| `supabase/functions/care-reminder/index.ts` | Hourly cron job: checks watering due dates, sends Web Push via VAPID, cleans stale subscriptions |
+| `supabase/migrations/sprint12_feedback_conversations.sql` | ✅ Executed — creates `identification_feedback` + `plant_conversations` tables with RLS and indexes |
+| `supabase/migrations/sprint13_push_notifications.sql` | ✅ Executed — creates `push_subscriptions`, `push_mutes`, `plant_care_actions` tables. pg_cron job scheduled hourly. VAPID secrets set. `VITE_VAPID_PUBLIC_KEY` added to Vercel. |
+| `src/utils/pushNotifications.js` | Push subscription helpers: subscribe/unsubscribe, mute/unmute per plant, VAPID key handling |
 | `src/index.css` | Design tokens (CSS custom properties), animations |
 | `src/supabaseClient.js` | Supabase client init |
 | `src/logger.js` | Structured console logger |
@@ -69,12 +77,43 @@ plant_logs
   HealthStatus text             -- 2-4 word label e.g. "Mildly Stressed"
   AccuracyScore int             -- 0–100 confidence
   CareInstructions jsonb        -- array of {title, description}
+  care_schedule jsonb           -- {water_every_days, fertilise_every_days, check_pests_every_days, notes}
   processing_log jsonb          -- debug: plantnet_score, independent_id, etc.
+  plantnet_candidates jsonb     -- top 3 PlantNet candidates [{name, common, score}]
+  IsCorrect boolean             -- user feedback: was identification correct?
+  UserCorrection text           -- user-provided correction name
   error_details text
   pest_detected boolean
   pest_name text
   pest_treatment jsonb          -- array of treatment step strings
   created_at timestamptz
+  toxicity jsonb                -- {risk_cats, risk_dogs, risk_humans, notes} — schema only, not yet in AI pipeline
+  light_intensity_analysis text -- schema only, not yet in AI pipeline
+  seasonal_context text         -- schema only, not yet in AI pipeline
+  growth_milestones jsonb       -- schema only, not yet in AI pipeline
+
+push_subscriptions               -- ✅ created Sprint 13
+  id uuid PK
+  user_id text
+  endpoint text UNIQUE          -- browser push endpoint URL
+  p256dh text                   -- browser push key
+  auth_key text                 -- browser push auth secret
+  timezone text                 -- IANA timezone from Intl.DateTimeFormat at subscribe time
+  created_at, updated_at timestamptz
+
+push_mutes                       -- ✅ created Sprint 13
+  id uuid PK
+  user_id text
+  plant_name text               -- plant identity key (plant_nickname || PlantName)
+  created_at timestamptz
+  UNIQUE(user_id, plant_name)
+
+plant_care_actions               -- ✅ created Sprint 13
+  id uuid PK
+  user_id text
+  plant_name text               -- plant identity key (plant_nickname || PlantName)
+  action_type text              -- 'watered' | 'fertilised' | 'pest_checked'
+  actioned_at timestamptz       -- when the user marked the action as done
 
 users
   id uuid PK
@@ -88,9 +127,24 @@ plantnet_cache
   image_hash text PK            -- SHA-256 of image bytes
   result jsonb
   created_at timestamptz
+
+identification_feedback          -- ✅ created Sprint 12b
+  id uuid PK
+  log_id uuid FK → plant_logs
+  user_id text
+  user_correction text
+  created_at timestamptz
+
+plant_conversations              -- ✅ created Sprint 12b
+  id uuid PK
+  log_id uuid FK → plant_logs
+  user_id text
+  messages jsonb                -- [{role: 'user'|'assistant', content: string}]
+  created_at timestamptz
+  updated_at timestamptz
 ```
 
-RLS: `plant_logs` allows anon insert + select + delete (by user_id). `users` allows anon insert only (no select — use service role to query). `user_profiles` — auth users can upsert their own row.
+RLS: `plant_logs` — anon insert + select + delete (by user_id). `users` — anon insert only. `user_profiles` — auth users upsert own row. `identification_feedback` — anon insert. `plant_conversations` — anon insert/select/update (open — user_id enforced at app layer).
 
 ---
 
@@ -115,6 +169,10 @@ RLS: `plant_logs` allows anon insert + select + delete (by user_id). `users` all
 - Both agree, PlantNet 20–49% → 75%
 - Gemini overrides PlantNet → 60% + "Possibly {name}" prefix
 - Gemini only (no PlantNet) → 70%
+- Correction re-run (user correction as candidate, Gemini agrees) → 83%
+- Correction re-run (Gemini overrides user) → 60%
+
+**Correction re-run flow** (`plant-processor/index.ts`): When `record.user_correction` is set, Stage 1 skips PlantNet entirely (image unchanged — result would be identical). Instead fetches `plantnet_candidates` from the existing `plant_logs` record. Injects user correction as top candidate in cross-validate prompt (labeled as user-provided, not PlantNet score). Gemini still does independent ID first (anti-anchoring). No PlantNet quota used.
 
 ---
 
@@ -135,26 +193,38 @@ RLS: `plant_logs` allows anon insert + select + delete (by user_id). `users` all
 | Bug | Plant ID anti-anchoring: restructured cross-validate prompt |
 | Bug | Delete plant from garden (HistoryScreen × button + confirmation) |
 | 11 | My Plants overview screen: 2-column photo grid (HistoryScreen) + PlantDetailScreen (hero, scan timeline, retry/delete). Navigation: Garden grid → PlantDetailScreen → ResultsScreen. Back from ResultsScreen returns to PlantDetailScreen when entered from there. |
+| 12a | Onboarding tour (UploadScreen): first-visit green callout banner + pulsing slot borders. `localStorage` flag `botaniq_onboarding_done`. Auto-dismisses on first photo added. |
+| 12b | User feedback + Q&A: thumbs-down → correction modal → re-run analysis (skips PlantNet, injects user correction as candidate). New `plant-chat` edge function for Q&A (max 3 turns, chat history stored in `plant_conversations`). Q&A collapsible section in ResultsScreen. Q&A 💬 indicator on PlantDetailScreen scan rows. Guest users: Q&A and corrections work but no cross-session history. Registered users: prior Q&A for same plant passed to Gemini as context. **DB migration must be run manually**: `supabase/migrations/sprint12_feedback_conversations.sql` |
+| 13 | Push notifications + care tracking: Web Push via VAPID, global opt-in with per-plant mute toggle in PlantDetailScreen. "Mark watered" button resets watering countdown using `plant_care_actions` table. `care-reminder` edge function runs hourly via pg_cron, sends reminders at 8am in each user's local timezone (captured at subscribe time via `Intl.DateTimeFormat`). iOS requires PWA installed to home screen (iOS 16.4+). **DB migration + pg_cron setup**: `supabase/migrations/sprint13_push_notifications.sql`. **Vercel**: add `VITE_VAPID_PUBLIC_KEY`. **Supabase secrets**: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`. |
 
 ---
 
-## Pending / Next Features (priority order)
+## Pending Features (priority order)
 
-1. **Care reminders / push notifications** — browser Push API to remind users when a care task is due. Care schedules already stored in `CareInstructions` on `plant_logs`. Needs: (a) browser Push API subscription stored in Supabase, (b) Supabase scheduled edge function to check due dates and send pushes, (c) UI in PlantDetailScreen or ResultsScreen to enable/disable reminders per plant.
-
-2. **User feedback on identifications** — thumbs down button on ResultsScreen that logs a correction (what the user says the plant actually is) to a new `identification_feedback` table. Data used for prompt tuning later. Needs: new Supabase table, a small modal/input for the user to type the correct name, RLS same as plant_logs.
-
-3. **Weekly email digest** — "your garden summary" via Resend or Sendgrid. Needs: scheduled Supabase function (cron), email template showing each plant's latest health status, only for registered (non-guest) users.
-
-4. **Onboarding tour** — first-time users don't know about the 3-slot photo feature. Simple tooltip/highlight overlay on first visit to UploadScreen. Use `localStorage` flag `botaniq_onboarding_done` to show once. Highlight the 3 upload slots with a pulsing border + tooltip text.
+| # | Feature | Notes |
+|---|---|---|
+| 1 | **Observability** | Sentry DSN wired up, funnel analytics (upload→result→register→reminder), PlantNet quota monitor (alert at 80% daily). |
+| 2 | **Onboarding gaps** | Sample result walkthrough (animated preview before upload), first-scan celebration moment, empty garden state redesign. |
+| 3 | **AI pipeline enrichments** | Toxicity matrix (pets/children risk), light intensity analysis, seasonal care logic — fields already in `plant_logs` schema, not yet in Gemini prompt. |
+| 4 | **UX polish** | Vital Signs meters (Hydration/Light/Nutrients/Pest), growth narratives across scans, skeleton screens, colourblind-safe health palette. |
+| 5 | **Voice Q&A** | Web Speech API in Q&A section for hands-free gardening. Multimodal: pass audio blobs directly to Gemini. |
+| 6 | **Weekly email digest** | Registered users only. Provider TBD (Resend vs Sendgrid). pg_cron scheduled edge function. Content: plant health summary + next watering per plant. Needs design discussion: frequency, opt-in vs opt-out, template. |
+| 7 | **Monetisation — Stripe freemium** | Stripe Checkout, scan usage counter, monthly free limit, Pro gating, upgrade prompt at soft limit. |
 
 ---
 
 ## Common Commands
 
 ```powershell
-# Deploy edge function
+# Deploy edge functions
 npx supabase functions deploy plant-processor --project-ref thgdxffelonamukytosq --no-verify-jwt
+npx supabase functions deploy plant-chat --project-ref thgdxffelonamukytosq --no-verify-jwt
+npx supabase functions deploy care-reminder --project-ref thgdxffelonamukytosq --no-verify-jwt
+
+# Set VAPID secrets in Supabase (run once after generating keys)
+npx supabase secrets set VAPID_PUBLIC_KEY="BNrFg1TOhvBK6EcICaGrzxDmVL-7OGGlLSW4_qPxuHANqFANVLlw8NvR-yUTOunfZ9pJITh2bjUOmtP95iDPPLc" --project-ref thgdxffelonamukytosq
+npx supabase secrets set VAPID_PRIVATE_KEY="<from credentials.env.txt>" --project-ref thgdxffelonamukytosq
+npx supabase secrets set VAPID_SUBJECT="mailto:poornima.budda@gmail.com" --project-ref thgdxffelonamukytosq
 
 # Check recent scans
 $h = @{ "apikey" = "<SERVICE_ROLE_KEY>"; "Authorization" = "Bearer <SERVICE_ROLE_KEY>" }

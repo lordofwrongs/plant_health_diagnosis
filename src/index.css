@@ -104,6 +104,14 @@ html, body {
   0%   { background-position: -200% center; }
   100% { background-position:  200% center; }
 }
+@keyframes slotGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(82,183,136,0); border-color: var(--leaf); }
+  50%       { box-shadow: 0 0 0 7px rgba(82,183,136,0.3); border-color: var(--leaf); }
+}
+.slot-pulse {
+  animation: slotGlow 1.8s ease-in-out infinite;
+  border: 2px solid var(--leaf) !important;
+}
 
 /* ── Utility ─────────────────────────────────────────── */
 .fade-up          { animation: fadeUp 0.45s ease forwards; }

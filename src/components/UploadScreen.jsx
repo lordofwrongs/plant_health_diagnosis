@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { supabase } from '../supabaseClient.js'
 import { logger } from '../logger.js'
+import { track } from '../utils/analytics.js'
 
 const BUCKET = 'plant_images'
 
@@ -19,6 +20,7 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
   const isProcessing = useRef(false)
   const [totalScans, setTotalScans] = useState(null)
   const [guideOpen, setGuideOpen] = useState(false)
+  const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem('botaniq_onboarding_done'))
 
   const wholeRef = useRef()
   const leafRef  = useRef()
@@ -30,6 +32,11 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
       if (data != null) setTotalScans(Number(data))
     })
   }, [])
+
+  const dismissOnboarding = () => {
+    localStorage.setItem('botaniq_onboarding_done', '1')
+    setShowOnboarding(false)
+  }
 
   const handleSlotFile = (key, fileList) => {
     const file = Array.from(fileList).find(f => f.type.startsWith('image/'))
@@ -43,6 +50,8 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
       return { ...prev, [key]: { file, preview: URL.createObjectURL(file) } }
     })
     setError(null)
+    track('photo_added', { slot: key })
+    if (showOnboarding) dismissOnboarding()
   }
 
   const removeSlot = (key) => {
@@ -124,6 +133,7 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
     isProcessing.current = true
     setUploading(true)
     setError(null)
+    track('scan_submitted', { photo_count: activeSlots.length, has_nickname: !!nickname })
 
     const guestId = localStorage.getItem('plant_care_guest_id')
     logger.info('UploadScreen', `Submit: ${activeSlots.length} photo(s), lang=${userLanguage}`, { guest_id: guestId })
@@ -193,12 +203,31 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
           Add up to 3 photos for the most accurate diagnosis
           <span style={styles.slotsOptional}> — 1 minimum</span>
         </p>
+
+        {showOnboarding && (
+          <div style={styles.onboardingBanner} role="status" aria-live="polite">
+            <span style={styles.onboardingIcon}>📸</span>
+            <div style={styles.onboardingText}>
+              <strong style={styles.onboardingTitle}>3 angles = much better results</strong>
+              <span style={styles.onboardingBody}> Tap each slot to add a whole-plant shot, a leaf close-up, and the stem base. One photo works too — just tap the first slot to start.</span>
+            </div>
+            <button
+              style={styles.onboardingDismiss}
+              onClick={dismissOnboarding}
+              aria-label="Dismiss tip"
+            >
+              Got it
+            </button>
+          </div>
+        )}
+
         <div style={styles.slotsRow} role="group" aria-label="Plant photo slots">
           {SLOTS.map(({ key, label, hint, icon }) => {
             const slot = slotImages[key]
             return (
               <div key={key} style={styles.slotWrap}>
                 <div
+                  className={showOnboarding && !slot ? 'slot-pulse' : ''}
                   style={{ ...styles.slot, ...(slot ? styles.slotFilled : {}) }}
                   onClick={() => !uploading && slotRefs[key].current.click()}
                   role="button"
@@ -389,6 +418,35 @@ const styles = {
     fontWeight: '400',
     color: 'var(--text-4)',
   },
+
+  onboardingBanner: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '10px',
+    background: 'rgba(82,183,136,0.1)',
+    border: '1px solid rgba(82,183,136,0.4)',
+    borderRadius: 'var(--r-sm)',
+    padding: '12px 14px',
+    marginBottom: '14px',
+  },
+  onboardingIcon: { fontSize: '18px', flexShrink: 0, marginTop: '1px' },
+  onboardingText: { flex: 1, fontSize: '12px', color: 'var(--text-2)', lineHeight: '1.5' },
+  onboardingTitle: { color: 'var(--primary)', fontWeight: '700' },
+  onboardingBody: { fontWeight: '400' },
+  onboardingDismiss: {
+    flexShrink: 0,
+    background: 'var(--primary)',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 'var(--r-full)',
+    padding: '5px 12px',
+    fontSize: '11px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    alignSelf: 'center',
+  },
+
   slotsRow: {
     display: 'grid',
     gridTemplateColumns: 'repeat(3, 1fr)',

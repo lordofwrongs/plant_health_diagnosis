@@ -46,6 +46,33 @@ const OFFLINE_HTML = `<!DOCTYPE html>
 
 self.addEventListener('install', () => self.skipWaiting())
 
+// ── Push notifications ────────────────────────────────────────────────────────
+self.addEventListener('push', e => {
+  const data = e.data?.json?.() ?? {}
+  e.waitUntil(
+    self.registration.showNotification(data.title ?? 'BotanIQ', {
+      body: data.body ?? 'Care reminder for your plant',
+      icon: data.icon ?? '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      data: { url: data.url ?? '/' },
+      tag: data.tag ?? 'care-reminder',
+      requireInteraction: false,
+    })
+  )
+})
+
+self.addEventListener('notificationclick', e => {
+  e.notification.close()
+  const url = e.notification.data?.url ?? '/'
+  e.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      const existing = list.find(c => c.url.includes(self.location.origin) && 'focus' in c)
+      if (existing) return existing.focus()
+      return clients.openWindow(url)
+    })
+  )
+})
+
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
