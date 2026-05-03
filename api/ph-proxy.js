@@ -3,8 +3,9 @@ export const config = {
 }
 
 export default async function handler(req, res) {
-  const originalPath = req.url.replace(/^\/api\/ph/, '')
-  const targetUrl = `https://us.i.posthog.com${originalPath}`
+  // req.url preserves the original path: /api/ph/e/?ip=0&...
+  const path = req.url.replace(/^\/api\/ph/, '') || '/'
+  const targetUrl = `https://us.i.posthog.com${path}`
 
   const chunks = []
   for await (const chunk of req) chunks.push(chunk)
@@ -22,9 +23,8 @@ export default async function handler(req, res) {
       body: body.length > 0 ? body : undefined,
     })
     res.status(response.status)
-    const data = await response.arrayBuffer()
-    res.end(Buffer.from(data))
+    res.end(Buffer.from(await response.arrayBuffer()))
   } catch (err) {
-    res.status(502).end('Proxy error: ' + err.message)
+    res.status(502).end('Proxy error')
   }
 }
