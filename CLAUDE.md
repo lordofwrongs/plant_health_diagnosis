@@ -13,7 +13,7 @@ GitHub: https://github.com/lordofwrongs/plant_health_diagnosis
 | Layer | Tech | Notes |
 |---|---|---|
 | Frontend | React 18 + Vite | `src/` — auto-deploys to Vercel on push to `main` |
-| Edge functions | Deno (Supabase) | `plant-processor` (full AI pipeline), `plant-chat` (Q&A), `care-reminder` (hourly push notifications) |
+| Edge functions | Deno (Supabase) | `plant-processor` (full AI pipeline), `plant-chat` (Q&A), `care-reminder` (hourly push notifications), `weekly-digest` (weekly email via Resend) |
 | Database | Supabase Postgres | Tables: `plant_logs`, `users`, `user_profiles`, `plantnet_cache`, `identification_feedback`, `plant_conversations`, `push_subscriptions`, `push_mutes`, `plant_care_actions` |
 | Storage | Supabase Storage | Bucket: `plant_images` (public) |
 | Realtime | Supabase Realtime | Channels: `log-monitor-{id}`, `history_realtime_sync` |
@@ -33,6 +33,9 @@ Read from `credentials.env.txt` in project root (never commit this file).
 - `VAPID_PUBLIC_KEY` — BNrFg1TOhvBK6EcICaGrzxDmVL-7OGGlLSW4_qPxuHANqFANVLlw8NvR-yUTOunfZ9pJITh2bjUOmtP95iDPPLc (set as Supabase secret)
 - `VAPID_PRIVATE_KEY` — (set as Supabase secret, value in credentials.env.txt)
 - `VAPID_SUBJECT` — mailto:poornima.budda@gmail.com (set as Supabase secret)
+- `RESEND_API_KEY` — (set as Supabase secret; get from resend.com dashboard)
+- `RESEND_FROM_EMAIL` — e.g. `BotanIQ <digest@yourdomain.com>` (set as Supabase secret; domain must be verified in Resend)
+- `APP_URL` — `https://plant-health-diagnosis.vercel.app` (set as Supabase secret — used in digest email links)
 
 Vercel env vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_APP_URL=https://plant-health-diagnosis.vercel.app`, `VITE_VAPID_PUBLIC_KEY` (same as VAPID_PUBLIC_KEY above)
 
@@ -52,6 +55,8 @@ Vercel env vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_APP_URL=ht
 | `supabase/functions/plant-processor/index.ts` | Full AI pipeline: PlantNet → Gemini cross-validate → DB update. Supports correction re-run via `user_correction` field. |
 | `supabase/functions/plant-chat/index.ts` | Lightweight Q&A: takes plant context from `plant_logs`, calls Gemini, stores in `plant_conversations` |
 | `supabase/functions/care-reminder/index.ts` | Hourly cron job: checks watering due dates, sends Web Push via VAPID, cleans stale subscriptions |
+| `supabase/functions/weekly-digest/index.ts` | Weekly cron job: sends HTML email digest via Resend to all registered users (not opted out). Handles GET `?action=unsubscribe&user_id=xxx` for one-click unsubscribe. |
+| `supabase/migrations/sprint17_weekly_digest.sql` | Adds `email_digest_opt_out` column to `user_profiles` + commented pg_cron schedule snippet |
 | `supabase/migrations/sprint12_feedback_conversations.sql` | ✅ Executed — creates `identification_feedback` + `plant_conversations` tables with RLS and indexes |
 | `supabase/migrations/sprint13_push_notifications.sql` | ✅ Executed — creates `push_subscriptions`, `push_mutes`, `plant_care_actions` tables. pg_cron job scheduled hourly. VAPID secrets set. `VITE_VAPID_PUBLIC_KEY` added to Vercel. |
 | `src/utils/pushNotifications.js` | Push subscription helpers: subscribe/unsubscribe, mute/unmute per plant, VAPID key handling |
@@ -123,6 +128,7 @@ users
 user_profiles
   id uuid PK (= supabase auth user id)
   email, first_name, last_name, phone, guest_id, created_at
+  email_digest_opt_out boolean DEFAULT false   -- ✅ added Sprint 17
 
 plantnet_cache
   image_hash text PK            -- SHA-256 of image bytes
@@ -200,6 +206,7 @@ RLS: `plant_logs` — anon insert + select + delete (by user_id). `users` — an
 | 14 | Observability: Sentry ErrorBoundary active (`VITE_SENTRY_DSN` in Vercel). PostHog funnel analytics — 15 events across 4 components (`app_opened`, `photo_added`, `scan_submitted`, `analysis_complete`, `analysis_failed`, `register_modal_shown`, `register_completed`, `register_skipped`, `qa_opened`, `qa_question_sent`, `correction_submitted`, `care_action_logged`, `notification_opted_in`, `notification_opted_out`, `plant_deleted`). PlantNet quota monitor in `plant-processor` (warns at ≥400/day). Fixed Gemini response schema bug (`nullable: true` not `type: ["string","null"]`). **Vercel**: `VITE_POSTHOG_KEY`, `VITE_SENTRY_DSN`. Events confirmed 200 OK via Network tab. |
 | 15 | Onboarding gaps: (1) **Sample result preview** — compact horizontal card (plant name, scientific name, health badge, 93% confidence, care pills) shown above the upload form on first visit only, auto-hides when user adds their first photo. (2) **First-scan celebration upgrade** — floating leaf particles (`floatUp` keyframe), bouncing white card (`celebPop` keyframe) showing actual plant name ("Meet your Snake Gourd!"), "See your results →" CTA, tap-anywhere-to-dismiss with proper `clearTimeout` via ref, auto-dismiss extended to 3.5s. (3) **Empty garden redesign** — fan of 3 overlapping photo cards (dark forest / mid-green / light mint gradients, rotated at −14°/+10°/−2°) teases what a full garden looks like. No external animation libs. |
 | 16 | AI pipeline enrichments + UX polish + Voice Q&A: (1) **AI enrichments** — `toxicity`, `light_intensity_analysis`, `seasonal_context`, `vital_signs` (hydration/light/nutrients/pest_risk 0–100 scores) now wired through Gemini prompt → DB → UI. `vital_signs` stored in new `plant_logs.vital_signs jsonb` column (migration: `sprint16_enrichments.sql`). (2) **Vital Signs meters** — 4-row progress bar panel in ResultsScreen, teal/amber/red by score, pest_risk inverted. (3) **Toxicity/Safety card** — per-species cat/dog/human risk with colour-coded pills. (4) **Environment card** — light analysis + seasonal care note. (5) **Colourblind-safe palette** — `healthCategoryToColor()` changed from green/red to teal (`#0D9488`)/amber/red; `--healthy` CSS var updated. (6) **HistoryScreen skeleton** — 4-card shimmer grid replaces loading spinner. (7) **Voice Q&A** — 🎤 mic button in Q&A input row, Web Speech API (`SpeechRecognition`/`webkitSpeechRecognition`), language-aware (en-US/hi-IN/ta-IN/te-IN), pulsing teal animation while listening, gracefully hidden when unsupported. ✅ **Confirmed working in production** (Bell Pepper scan verified). DB migration executed. Edge function deployed. |
+| 17 | Weekly email digest: `weekly-digest` Supabase edge function sends a branded HTML email to all registered users every Sunday 8am UTC via **Brevo** API. Content: each user's plants with latest health status, watering countdown, pest alerts. Opt-out only — one-click unsubscribe link in email sets `users.email_digest_opt_out = true`. Scans matched via `users.guest_id` (how `plant_logs.user_id` is stored). **Secrets**: `BREVO_API_KEY`, `RESEND_FROM_EMAIL` (sender address verified in Brevo), `APP_URL`. **DB migrations**: `sprint17_weekly_digest.sql` + `ALTER TABLE users ADD COLUMN email_digest_opt_out boolean DEFAULT false` (run manually). **pg_cron**: `weekly-plant-digest` scheduled `0 8 * * 0`. ✅ **Confirmed working in production** — 2 emails delivered, cron active. |
 
 ---
 
@@ -208,8 +215,7 @@ RLS: `plant_logs` — anon insert + select + delete (by user_id). `users` — an
 | # | Feature | Notes |
 |---|---|---|
 | 1 | **UX polish (remaining)** | Growth narratives across scans (Gemini-generated when history exists), skeleton screens for ResultsScreen correction re-run. |
-| 2 | **Weekly email digest** | Registered users only. Provider TBD (Resend vs Sendgrid). pg_cron scheduled edge function. Content: plant health summary + next watering per plant. Needs design discussion: frequency, opt-in vs opt-out, template. |
-| 3 | **Monetisation — Stripe freemium** | Stripe Checkout, scan usage counter, monthly free limit, Pro gating, upgrade prompt at soft limit. |
+| 2 | **Monetisation — Stripe freemium** | Stripe Checkout, scan usage counter, monthly free limit, Pro gating, upgrade prompt at soft limit. |
 
 ---
 
@@ -220,11 +226,17 @@ RLS: `plant_logs` — anon insert + select + delete (by user_id). `users` — an
 npx supabase functions deploy plant-processor --project-ref thgdxffelonamukytosq --no-verify-jwt
 npx supabase functions deploy plant-chat --project-ref thgdxffelonamukytosq --no-verify-jwt
 npx supabase functions deploy care-reminder --project-ref thgdxffelonamukytosq --no-verify-jwt
+npx supabase functions deploy weekly-digest --project-ref thgdxffelonamukytosq --no-verify-jwt
 
 # Set VAPID secrets in Supabase (run once after generating keys)
 npx supabase secrets set VAPID_PUBLIC_KEY="BNrFg1TOhvBK6EcICaGrzxDmVL-7OGGlLSW4_qPxuHANqFANVLlw8NvR-yUTOunfZ9pJITh2bjUOmtP95iDPPLc" --project-ref thgdxffelonamukytosq
 npx supabase secrets set VAPID_PRIVATE_KEY="<from credentials.env.txt>" --project-ref thgdxffelonamukytosq
 npx supabase secrets set VAPID_SUBJECT="mailto:poornima.budda@gmail.com" --project-ref thgdxffelonamukytosq
+
+# Set Resend secrets for weekly digest (Sprint 17)
+npx supabase secrets set RESEND_API_KEY="<from resend.com dashboard>" --project-ref thgdxffelonamukytosq
+npx supabase secrets set RESEND_FROM_EMAIL="BotanIQ <digest@yourdomain.com>" --project-ref thgdxffelonamukytosq
+npx supabase secrets set APP_URL="https://plant-health-diagnosis.vercel.app" --project-ref thgdxffelonamukytosq
 
 # Check recent scans
 $h = @{ "apikey" = "<SERVICE_ROLE_KEY>"; "Authorization" = "Bearer <SERVICE_ROLE_KEY>" }
