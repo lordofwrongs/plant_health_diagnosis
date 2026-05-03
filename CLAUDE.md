@@ -215,7 +215,6 @@ RLS: `plant_logs` — anon insert + select + delete (by user_id). `users` — an
 | # | Feature | Notes |
 |---|---|---|
 | 1 | **UX polish (remaining)** | Growth narratives across scans (Gemini-generated when history exists), skeleton screens for ResultsScreen correction re-run. |
-| 2 | **Monetisation — Stripe freemium** | Stripe Checkout, scan usage counter, monthly free limit, Pro gating, upgrade prompt at soft limit. |
 
 ---
 
