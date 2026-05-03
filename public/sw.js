@@ -13,6 +13,8 @@ const API_HOSTS = [
   'ipapi.co',
   'open-meteo.com',
   'resend.com',
+  'posthog.com',
+  'sentry.io',
   'fonts.googleapis.com',
   'fonts.gstatic.com',
 ]
