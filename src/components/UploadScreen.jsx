@@ -195,6 +195,9 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
         </p>
       </div>
 
+      {/* Sample result preview — first visit only */}
+      {showOnboarding && <SampleResultPreview />}
+
       {/* Card */}
       <div className="fade-up-delay-1 verdant-card" style={styles.card}>
 
@@ -360,6 +363,96 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
       </div>
     </div>
   )
+}
+
+function SampleResultPreview() {
+  return (
+    <div className="fade-up" style={previewStyles.wrap}>
+      <p style={previewStyles.eyebrow}>✨ Here's what a scan reveals</p>
+      <div style={previewStyles.card}>
+        <div style={previewStyles.imgBox}>
+          <span style={{ fontSize: '30px', lineHeight: 1 }}>🌿</span>
+        </div>
+        <div style={previewStyles.info}>
+          <div style={previewStyles.nameRow}>
+            <span style={previewStyles.name}>Snake Gourd</span>
+            <span style={previewStyles.score}>93%</span>
+          </div>
+          <span style={previewStyles.sci}>Trichosanthes cucumerina</span>
+          <div style={previewStyles.health}>
+            <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#059669', flexShrink: 0, display: 'inline-block' }} />
+            <span style={previewStyles.healthLabel}>Healthy</span>
+          </div>
+          <div style={previewStyles.pills}>
+            <span style={previewStyles.pill}>💧 Water every 2 days</span>
+            <span style={previewStyles.pill}>☀️ Full sun</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const previewStyles = {
+  wrap: {
+    width: '100%',
+    maxWidth: '460px',
+    marginBottom: '16px',
+  },
+  eyebrow: {
+    fontSize: '11px',
+    fontWeight: '700',
+    color: 'var(--leaf)',
+    letterSpacing: '0.6px',
+    textTransform: 'uppercase',
+    marginBottom: '8px',
+    paddingLeft: '2px',
+  },
+  card: {
+    display: 'flex',
+    gap: '14px',
+    background: 'var(--card)',
+    borderRadius: 'var(--r-lg)',
+    padding: '16px',
+    boxShadow: 'var(--shadow-sm)',
+    border: '1px solid rgba(82,183,136,0.3)',
+    alignItems: 'center',
+  },
+  imgBox: {
+    width: '70px',
+    height: '70px',
+    borderRadius: 'var(--r-md)',
+    background: 'linear-gradient(145deg, #2D6A4F 0%, #52B788 100%)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  info: { flex: 1, minWidth: 0 },
+  nameRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: '2px',
+  },
+  name: { fontSize: '15px', fontWeight: '700', color: 'var(--text-1)' },
+  score: {
+    fontSize: '11px', fontWeight: '800', color: 'var(--leaf)',
+    background: 'rgba(82,183,136,0.12)',
+    padding: '2px 8px', borderRadius: 'var(--r-full)',
+  },
+  sci: {
+    fontSize: '11px', color: 'var(--text-3)', fontStyle: 'italic',
+    marginBottom: '6px', display: 'block',
+  },
+  health: { display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '8px' },
+  healthLabel: { fontSize: '12px', fontWeight: '600', color: '#059669' },
+  pills: { display: 'flex', gap: '6px', flexWrap: 'wrap' },
+  pill: {
+    fontSize: '10px', color: 'var(--text-2)',
+    background: 'var(--mist)', border: '1px solid var(--border)',
+    borderRadius: 'var(--r-full)', padding: '3px 8px',
+  },
 }
 
 const styles = {

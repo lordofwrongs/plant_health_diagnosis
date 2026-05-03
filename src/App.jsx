@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import UploadScreen from './components/UploadScreen.jsx'
 import AnalysingScreen from './components/AnalysingScreen.jsx'
 import ResultsScreen from './components/ResultsScreen.jsx'
@@ -29,6 +29,7 @@ export default function App() {
 
   const [showRegisterModal, setShowRegisterModal] = useState(false)
   const [showCelebration, setShowCelebration] = useState(false)
+  const celebrationTimerRef = useRef(null)
 
   const [preferences, setPreferences] = useState(() => {
     const saved = localStorage.getItem('plant_care_prefs')
@@ -127,14 +128,13 @@ export default function App() {
     if (isFirst) {
       localStorage.setItem('botaniq_first_scan', 'done')
       setShowCelebration(true)
-      // Show celebration for 2.5s then show register modal if not yet registered
-      setTimeout(() => {
+      celebrationTimerRef.current = setTimeout(() => {
         setShowCelebration(false)
         if (!localStorage.getItem('botaniq_registered')) {
           track('register_modal_shown', { trigger: 'first_scan' })
           setShowRegisterModal(true)
         }
-      }, 2500)
+      }, 3500)
     } else if (!localStorage.getItem('botaniq_registered')) {
       track('register_modal_shown', { trigger: 'repeat' })
       setShowRegisterModal(true)
@@ -218,18 +218,75 @@ export default function App() {
 
       {/* ── First-scan celebration ──────────────────────────── */}
       {showCelebration && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 600,
-          background: 'rgba(10,31,20,0.72)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          animation: 'fadeUp 0.4s ease both',
-        }}>
-          <div style={{ textAlign: 'center', color: '#fff', padding: '24px' }}>
-            <div style={{ fontSize: '64px', marginBottom: '16px', animation: 'leafSway 1s ease-in-out infinite' }}>🌿</div>
-            <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: '28px', fontWeight: '700', marginBottom: '10px' }}>
-              Welcome to your garden!
+        <div
+          onClick={() => {
+            clearTimeout(celebrationTimerRef.current)
+            setShowCelebration(false)
+            if (!localStorage.getItem('botaniq_registered')) {
+              track('register_modal_shown', { trigger: 'first_scan' })
+              setShowRegisterModal(true)
+            }
+          }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 600,
+            background: 'rgba(10,31,20,0.85)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer',
+            overflow: 'hidden',
+          }}
+        >
+          {/* Floating leaf particles */}
+          {[
+            { top: '78%', left: '8%',  size: 30, delay: 0,    dur: 2.8 },
+            { top: '82%', left: '22%', size: 22, delay: 0.25, dur: 3.2 },
+            { top: '74%', left: '48%', size: 38, delay: 0.1,  dur: 2.6 },
+            { top: '86%', left: '63%', size: 26, delay: 0.45, dur: 3.0 },
+            { top: '80%', left: '78%', size: 20, delay: 0.15, dur: 2.9 },
+            { top: '88%', left: '38%', size: 24, delay: 0.35, dur: 3.1 },
+          ].map(({ top, left, size, delay, dur }, i) => (
+            <span key={i} aria-hidden="true" style={{
+              position: 'absolute', top, left, fontSize: size,
+              animation: `floatUp ${dur}s ease-out ${delay}s both`,
+              pointerEvents: 'none', userSelect: 'none',
+            }}>🌿</span>
+          ))}
+
+          {/* Main card */}
+          <div style={{
+            background: 'var(--card)',
+            borderRadius: 'var(--r-xl)',
+            padding: '40px 32px 32px',
+            textAlign: 'center',
+            maxWidth: '320px',
+            width: '90%',
+            animation: 'celebPop 0.5s cubic-bezier(0.34,1.56,0.64,1) both',
+            boxShadow: '0 24px 64px rgba(0,0,0,0.35)',
+            position: 'relative',
+          }}>
+            <div style={{ fontSize: '56px', marginBottom: '6px', animation: 'leafSway 1.4s ease-in-out infinite' }}>🌿</div>
+            <p style={{
+              fontSize: '10px', fontWeight: '800', letterSpacing: '1.5px',
+              textTransform: 'uppercase', color: 'var(--leaf)', marginBottom: '10px',
+            }}>First scan complete</p>
+            <h2 style={{
+              fontFamily: "'Playfair Display', serif",
+              fontSize: '26px', fontWeight: '700', color: 'var(--text-1)',
+              lineHeight: '1.25', marginBottom: '12px',
+            }}>
+              {result?.PlantName ? `Meet your ${result.PlantName}!` : 'Welcome to your garden!'}
             </h2>
-            <p style={{ fontSize: '16px', opacity: 0.8 }}>Your first plant has been analysed and saved.</p>
+            <p style={{ fontSize: '14px', color: 'var(--text-3)', lineHeight: '1.65', marginBottom: '28px' }}>
+              Species identified, health assessed, and a personalised care plan is ready for you.
+            </p>
+            <div style={{
+              display: 'inline-flex', alignItems: 'center', gap: '6px',
+              background: 'var(--primary)', color: '#fff',
+              borderRadius: 'var(--r-full)', padding: '13px 28px',
+              fontSize: '14px', fontWeight: '700',
+              boxShadow: '0 4px 16px rgba(27,67,50,0.25)',
+            }}>
+              See your results →
+            </div>
           </div>
         </div>
       )}

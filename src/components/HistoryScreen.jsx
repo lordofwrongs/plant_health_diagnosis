@@ -145,27 +145,47 @@ function PlantCard({ group, onClick }) {
   )
 }
 
+const FAN_CARDS = [
+  { rotate: '-14deg', tx: '-62%', ty: '10px', zIndex: 1, bg: 'linear-gradient(155deg, #1B4332 0%, #2D6A4F 100%)', emoji: '🌱', name: 'Basil' },
+  { rotate:  '10deg', tx: '-42%', ty: '6px',  zIndex: 2, bg: 'linear-gradient(155deg, #2D6A4F 0%, #52B788 100%)', emoji: '🍃', name: 'Monstera' },
+  { rotate:  '-2deg', tx: '-54%', ty: '0px',  zIndex: 3, bg: 'linear-gradient(155deg, #52B788 0%, #95D5B2 100%)', emoji: '🌿', name: 'Tomato' },
+]
+
 function EmptyState({ onRetakePhoto }) {
   return (
     <div className="fade-up-delay-1" style={styles.emptyState}>
-      <div style={styles.sampleCard}>
-        <div style={styles.sampleThumb}>🌿</div>
-        <div style={styles.sampleContent}>
-          <p style={styles.sampleName}>Snake Gourd</p>
-          <p style={styles.sampleSci}>Trichosanthes cucumerina</p>
-          <div style={styles.sampleStatus}>
-            <span style={{ ...styles.dot, background: '#4CAF50' }} />
-            <span style={{ ...styles.sampleStatusLabel, color: '#4CAF50' }}>Healthy</span>
+      {/* Fan of mock photo cards */}
+      <div style={styles.fanWrap} aria-hidden="true">
+        {FAN_CARDS.map((card, i) => (
+          <div key={i} style={{
+            position: 'absolute',
+            bottom: 0,
+            left: '50%',
+            transform: `translateX(${card.tx}) translateY(${card.ty}) rotate(${card.rotate})`,
+            zIndex: card.zIndex,
+            width: '88px',
+            height: '118px',
+            borderRadius: '16px',
+            background: card.bg,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            boxShadow: '0 6px 20px rgba(10,31,20,0.22)',
+          }}>
+            <span style={{ fontSize: '32px', lineHeight: 1 }}>{card.emoji}</span>
+            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.85)', fontWeight: '700' }}>{card.name}</span>
           </div>
-        </div>
-        <span style={styles.sampleBadge}>Example</span>
+        ))}
       </div>
+
       <h3 style={styles.emptyTitle}>Your garden awaits</h3>
       <p style={styles.emptyText}>
         Scan any plant to identify it, diagnose its health, and get a personalised care plan.
       </p>
       <button style={styles.emptyAction} onClick={onRetakePhoto}>
-        🌿 Scan your first plant
+        Scan your first plant
       </button>
     </div>
   )
@@ -331,64 +351,34 @@ const styles = {
   // Empty state
   emptyState: {
     textAlign: 'center',
-    padding: '60px 24px',
+    paddingTop: '180px',
+    paddingBottom: '60px',
+    paddingLeft: '24px',
+    paddingRight: '24px',
     background: 'var(--card)',
     borderRadius: 'var(--r-xl)',
     border: '1px dashed var(--border)',
-  },
-  sampleCard: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '14px',
-    background: 'var(--card)',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--r-lg)',
-    padding: '14px 16px',
-    marginBottom: '24px',
-    width: '100%',
     position: 'relative',
-    opacity: 0.75,
+    overflow: 'hidden',
   },
-  sampleThumb: {
-    fontSize: '36px',
-    width: '56px',
-    height: '56px',
-    background: 'rgba(82,183,136,0.12)',
-    borderRadius: 'var(--r-md)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  sampleContent: { flex: 1, minWidth: 0 },
-  sampleName:   { fontSize: '15px', fontWeight: '700', color: 'var(--text-1)', margin: 0, marginBottom: '2px' },
-  sampleSci:    { fontSize: '12px', color: 'var(--text-3)', fontStyle: 'italic', margin: 0, marginBottom: '6px' },
-  sampleStatus: { display: 'flex', alignItems: 'center', gap: '7px' },
-  dot:          { width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0 },
-  sampleStatusLabel: { fontSize: '13px', fontWeight: '600' },
-  sampleBadge: {
+  fanWrap: {
     position: 'absolute',
-    top: '10px',
-    right: '12px',
-    fontSize: '9px',
-    fontWeight: '800',
-    color: 'var(--mid)',
-    background: 'var(--sage)',
-    borderRadius: 'var(--r-full)',
-    padding: '2px 8px',
-    letterSpacing: '0.5px',
-    textTransform: 'uppercase',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: '180px',
   },
   emptyTitle: {
     fontFamily: "'Playfair Display', serif",
-    fontSize: '22px',
+    fontSize: '24px',
+    fontWeight: '700',
     color: 'var(--text-1)',
     marginBottom: '10px',
   },
-  emptyText: { fontSize: '14px', color: 'var(--text-3)', lineHeight: '1.6' },
+  emptyText: { fontSize: '14px', color: 'var(--text-3)', lineHeight: '1.65', maxWidth: '280px', margin: '0 auto' },
   emptyAction: {
-    marginTop: '20px',
-    padding: '14px 28px',
+    marginTop: '24px',
+    padding: '15px 32px',
     background: 'var(--primary)',
     color: '#fff',
     border: 'none',
@@ -396,6 +386,9 @@ const styles = {
     fontSize: '14px',
     fontWeight: '700',
     cursor: 'pointer',
-    boxShadow: '0 4px 16px rgba(27,67,50,0.2)',
+    boxShadow: '0 4px 20px rgba(27,67,50,0.25)',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '8px',
   },
 }

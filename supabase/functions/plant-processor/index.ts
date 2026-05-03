@@ -546,7 +546,7 @@ serve(async (req: Request) => {
       type: "object",
       properties: {
         is_analyzable: { type: "boolean" },
-        photo_tip: { type: ["string", "null"] },
+        photo_tip: { type: "string", nullable: true },
         organ: { type: "string" },
         independent_id: { type: "string" },
         agrees_with_specialist: { type: "boolean" },
@@ -578,19 +578,19 @@ serve(async (req: Request) => {
         seasonal_context: { type: "string" },
         recovery_steps: { type: "array", items: { type: "string" } },
         pro_tip: { type: "string" },
-        weather_alert: { type: ["string", "null"] },
+        weather_alert: { type: "string", nullable: true },
         care_schedule: {
           type: "object",
           properties: {
             water_every_days: { type: "number" },
             fertilise_every_days: { type: "number" },
             check_pests_every_days: { type: "number" },
-            notes: { type: ["string", "null"] }
+            notes: { type: "string", nullable: true }
           }
         },
         pest_detected: { type: "boolean" },
-        pest_name: { type: ["string", "null"] },
-        pest_treatment: { type: ["array", "null"], items: { type: "string" } }
+        pest_name: { type: "string", nullable: true },
+        pest_treatment: { type: "array", nullable: true, items: { type: "string" } }
       },
       required: [
         "is_analyzable", "independent_id", "final_scientific_name", 

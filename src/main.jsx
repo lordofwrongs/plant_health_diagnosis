@@ -19,7 +19,10 @@ if (import.meta.env.VITE_POSTHOG_KEY) {
     ui_host: 'https://us.posthog.com',
     capture_pageview: false,
     autocapture: false,
+    loaded: (ph) => console.log('[BotanIQ] PostHog ready, id:', ph.get_distinct_id()),
   })
+} else {
+  console.warn('[BotanIQ] PostHog key missing — analytics disabled')
 }
 
 function ErrorFallback() {
