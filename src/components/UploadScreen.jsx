@@ -4,6 +4,7 @@ import { logger } from '../logger.js'
 import { track } from '../utils/analytics.js'
 
 const BUCKET = 'plant_images'
+const isAndroid = /Android/i.test(navigator.userAgent)
 
 const SLOTS = [
   { key: 'whole', label: 'Whole plant',    hint: 'Side angle, full plant visible', icon: '🌿' },
@@ -21,17 +22,27 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
   const [totalScans, setTotalScans] = useState(null)
   const [guideOpen, setGuideOpen] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem('botaniq_onboarding_done'))
+  const [sheetSlotKey, setSheetSlotKey] = useState(null)
 
-  const wholeRef = useRef()
-  const leafRef  = useRef()
-  const stemRef  = useRef()
-  const slotRefs = { whole: wholeRef, leaf: leafRef, stem: stemRef }
+  const wholeCameraRef  = useRef()
+  const wholeGalleryRef = useRef()
+  const leafCameraRef   = useRef()
+  const leafGalleryRef  = useRef()
+  const stemCameraRef   = useRef()
+  const stemGalleryRef  = useRef()
+  const slotCameraRefs  = { whole: wholeCameraRef,  leaf: leafCameraRef,  stem: stemCameraRef  }
+  const slotGalleryRefs = { whole: wholeGalleryRef, leaf: leafGalleryRef, stem: stemGalleryRef }
 
   useEffect(() => {
     supabase.rpc('get_total_scans').then(({ data }) => {
       if (data != null) setTotalScans(Number(data))
     })
   }, [])
+
+  useEffect(() => {
+    document.body.style.overflow = sheetSlotKey ? 'hidden' : ''
+    return () => { document.body.style.overflow = '' }
+  }, [sheetSlotKey])
 
   const dismissOnboarding = () => {
     localStorage.setItem('botaniq_onboarding_done', '1')
@@ -232,11 +243,17 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
                 <div
                   className={showOnboarding && !slot ? 'slot-pulse' : ''}
                   style={{ ...styles.slot, ...(slot ? styles.slotFilled : {}) }}
-                  onClick={() => !uploading && slotRefs[key].current.click()}
+                  onClick={() => {
+                    if (uploading) return
+                    isAndroid ? setSheetSlotKey(key) : slotGalleryRefs[key].current.click()
+                  }}
                   role="button"
                   tabIndex={0}
                   aria-label={slot ? `Replace ${label} photo` : `Add ${label} photo`}
-                  onKeyDown={e => e.key === 'Enter' && !uploading && slotRefs[key].current.click()}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !uploading)
+                      isAndroid ? setSheetSlotKey(key) : slotGalleryRefs[key].current.click()
+                  }}
                 >
                   {slot ? (
                     <>
@@ -259,11 +276,21 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
                 <p style={styles.slotLabel} aria-hidden="true">{label}</p>
                 <p style={styles.slotHint}  aria-hidden="true">{hint}</p>
                 <input
-                  ref={slotRefs[key]}
+                  ref={slotCameraRefs[key]}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  style={{ display: 'none' }}
+                  onChange={e => { handleSlotFile(key, e.target.files); setSheetSlotKey(null); e.target.value = '' }}
+                  aria-hidden="true"
+                  tabIndex={-1}
+                />
+                <input
+                  ref={slotGalleryRefs[key]}
                   type="file"
                   accept="image/*"
                   style={{ display: 'none' }}
-                  onChange={e => handleSlotFile(key, e.target.files)}
+                  onChange={e => { handleSlotFile(key, e.target.files); setSheetSlotKey(null); e.target.value = '' }}
                   aria-hidden="true"
                   tabIndex={-1}
                 />
@@ -361,6 +388,14 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
           <span key={item} style={styles.trustItem}>{item}</span>
         ))}
       </div>
+
+      {sheetSlotKey && (
+        <PhotoSourceSheet
+          onCamera={() => slotCameraRefs[sheetSlotKey].current.click()}
+          onGallery={() => slotGalleryRefs[sheetSlotKey].current.click()}
+          onDismiss={() => setSheetSlotKey(null)}
+        />
+      )}
     </div>
   )
 }
@@ -752,5 +787,101 @@ const styles = {
     color: 'var(--leaf)',
     borderColor: 'rgba(82,183,136,0.4)',
     background: 'rgba(82,183,136,0.08)',
+  },
+}
+
+function PhotoSourceSheet({ onCamera, onGallery, onDismiss }) {
+  return (
+    <>
+      <div style={sheetStyles.backdrop} onClick={onDismiss} aria-hidden="true" />
+      <div style={sheetStyles.sheet} role="dialog" aria-modal="true" aria-label="Add a photo">
+        <div style={sheetStyles.handle} aria-hidden="true" />
+        <p style={sheetStyles.title}>Add a photo</p>
+        <button style={sheetStyles.option} onClick={onCamera}>
+          <span style={sheetStyles.optionIcon} aria-hidden="true">📷</span>
+          <span style={sheetStyles.optionLabel}>Take Photo</span>
+        </button>
+        <button style={sheetStyles.option} onClick={onGallery}>
+          <span style={sheetStyles.optionIcon} aria-hidden="true">🖼️</span>
+          <span style={sheetStyles.optionLabel}>Choose from Gallery</span>
+        </button>
+        <button style={sheetStyles.cancel} onClick={onDismiss}>Cancel</button>
+      </div>
+    </>
+  )
+}
+
+const sheetStyles = {
+  backdrop: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,0.45)',
+    zIndex: 100,
+  },
+  sheet: {
+    position: 'fixed',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    background: 'var(--card)',
+    borderRadius: '20px 20px 0 0',
+    padding: '12px 20px 40px',
+    zIndex: 101,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+    boxShadow: '0 -8px 32px rgba(10,31,20,0.18)',
+  },
+  handle: {
+    width: '36px',
+    height: '4px',
+    borderRadius: '2px',
+    background: 'var(--border)',
+    alignSelf: 'center',
+    marginBottom: '12px',
+  },
+  title: {
+    fontSize: '13px',
+    fontWeight: '700',
+    color: 'var(--text-3)',
+    textAlign: 'center',
+    marginBottom: '8px',
+    letterSpacing: '0.3px',
+    textTransform: 'uppercase',
+  },
+  option: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '14px',
+    width: '100%',
+    padding: '15px 16px',
+    background: 'none',
+    border: 'none',
+    borderRadius: 'var(--r-sm)',
+    cursor: 'pointer',
+    textAlign: 'left',
+  },
+  optionIcon: {
+    fontSize: '22px',
+    width: '36px',
+    textAlign: 'center',
+    flexShrink: 0,
+  },
+  optionLabel: {
+    fontSize: '16px',
+    fontWeight: '600',
+    color: 'var(--text-1)',
+  },
+  cancel: {
+    marginTop: '8px',
+    width: '100%',
+    padding: '14px',
+    background: 'var(--mist)',
+    border: 'none',
+    borderRadius: 'var(--r-sm)',
+    fontSize: '15px',
+    fontWeight: '700',
+    color: 'var(--text-2)',
+    cursor: 'pointer',
   },
 }
