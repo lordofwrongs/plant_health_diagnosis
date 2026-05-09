@@ -653,14 +653,33 @@ serve(async (req: Request) => {
         pest_detected: { type: "boolean" },
         pest_name: { type: "string", nullable: true },
         pest_treatment: { type: "array", nullable: true, items: { type: "string" } },
-        growth_narrative: { type: "string", nullable: true }
+        growth_narrative: { type: "string", nullable: true },
+        plant_classification: {
+          type: "object",
+          properties: {
+            primary_use: {
+              type: "string",
+              enum: ["vegetable", "fruit", "herb_culinary", "herb_medicinal", "ornamental", "weed", "tree", "succulent", "invasive", "unknown"]
+            },
+            is_edible: { type: "boolean" },
+            edible_parts: { type: "string", nullable: true },
+            edibility_notes: { type: "string", nullable: true },
+            is_weed: { type: "boolean" },
+            weed_action: { type: "string", nullable: true },
+            cultivation_status: {
+              type: "string",
+              enum: ["cultivated", "wild", "invasive", "naturalised", "unknown"]
+            }
+          },
+          required: ["primary_use", "is_edible", "is_weed", "cultivation_status"]
+        }
       },
       required: [
         "is_analyzable", "independent_id", "final_scientific_name",
         "display_name", "health_category", "health_status",
         "analysis", "recovery_steps", "pro_tip", "care_schedule",
         "pest_detected", "toxicity", "light_intensity_analysis",
-        "seasonal_context", "vital_signs"
+        "seasonal_context", "vital_signs", "plant_classification"
       ]
     };
 
@@ -715,14 +734,22 @@ STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
 5. TOXICITY: Assess safety for cats, dogs, and humans.
 6. LIGHT & SEASON: Analyze light from shadows and provide seasonal care context for ${new Date().toLocaleString('default', { month: 'long' })} in the ${log.latitude > 0 ? 'Northern' : 'Southern'} hemisphere.
 7. REGIONAL NAMES: Use traditional names used by locals — not literal translations.
-8. USER LANGUAGE: All user-facing text (except health_category) in ${userLang}.
-9. weather_alert: Only if weather data indicates genuine risk. Otherwise null.
+8. USER LANGUAGE: All user-facing text (except health_category and primary_use enum) in ${userLang}.
+9. WEATHER-DRIVEN CARE: Use the provided Weather context. If extreme heat/rain is forecast, include a specific instruction in 'weather_alert' (e.g., "Heatwave tomorrow: move seedlings to shade") and adjust watering frequency in 'care_schedule' if needed.
 10. CARE STEPS: Concrete actions in ${userLang}. Name product types, no brands.
 11. PEST DETECTION: Holes, webbing, or visible insects.
 12. VITAL SIGNS — rate 0–100 from visual evidence only. hydration: leaf turgor, wilting, soil moisture cues. light: growth direction, stretch, leaf colour. nutrients: colour uniformity, chlorosis, vigour. pest_risk: visible damage, webbing, insects (0 = none, 100 = severe).
 13. SEASONAL CONTEXT: 1–2 sentences on care adjustments for ${new Date().toLocaleString('default', { month: 'long' })} in the ${(log.latitude ?? 0) >= 0 ? 'Northern' : 'Southern'} Hemisphere in ${userLang}.
 14. GROWTH NARRATIVE: ${nearbyLogs?.length ? `The previous scan showed this plant as "${nearbyLogs[0].HealthStatus}". Write 1–2 warm, specific sentences comparing the current condition to that previous scan — what has improved, stayed the same, or needs attention. Be encouraging and concrete. Write in ${userLang}.` : 'This is the first scan for this plant. Set growth_narrative to null.'}
-15. BOTANICAL EXPERTISE: Specifically look for signs of being 'root-bound' by analyzing the pot-to-foliage size ratio. Also check for specific nutrient deficiencies (e.g., interveinal chlorosis for Magnesium, yellowing new growth for Iron). Mention these specific conditions in the 'analysis' and 'recovery_steps' if detected.`,
+15. BOTANICAL EXPERTISE: Specifically look for signs of being 'root-bound' by analyzing the pot-to-foliage size ratio. Also check for specific nutrient deficiencies (e.g., interveinal chlorosis for Magnesium, yellowing new growth for Iron). Mention these specific conditions in the 'analysis' and 'recovery_steps' if detected.
+16. PLANT CLASSIFICATION: Determine the plant's primary use and edibility.
+  - primary_use: one of vegetable / fruit / herb_culinary / herb_medicinal / ornamental / weed / tree / succulent / invasive / unknown
+  - is_edible: true if any part is edible by humans under normal preparation
+  - edible_parts: which parts and how (e.g. "young leaves — blanch before eating")
+  - is_weed: true if this plant is unwanted in a garden context
+  - weed_action: if is_weed=true, give one concrete removal instruction (e.g. "pull before flowering")
+  - cultivation_status: cultivated / wild / invasive / naturalised / unknown
+  Write edibility_notes and weed_action in ${userLang}.`,
       imageBase64, imageMimeType, logger, 'stage2_analysis',
       0.1, 45000, extraImages, PLANT_ANALYSIS_SCHEMA
     )
@@ -812,6 +839,7 @@ STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
         seasonal_context:        typeof result.seasonal_context === 'string' ? result.seasonal_context : null,
         vital_signs:             result.vital_signs ?? null,
         growth_milestones:       result.growth_narrative ? { narrative: String(result.growth_narrative) } : null,
+        plant_classification:    result.plant_classification ?? null,
         status:                  'done',
         // Store photo_tip as gentle guidance in ResultsScreen when image quality was imperfect
         error_details:      result.photo_tip ?? null,
@@ -820,6 +848,21 @@ STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
       .eq('id', record_id)
 
     if (updateError) throw new Error(`DB update failed: ${updateError.message}`)
+
+    // FIX-28: Schedule a 7-day follow-up reminder when a pest is detected
+    if (result.pest_detected && result.pest_name) {
+      const remindAt = new Date()
+      remindAt.setDate(remindAt.getDate() + 7)
+      supabase.from('follow_up_reminders').insert({
+        user_id,
+        log_id: record_id,
+        remind_at: remindAt.toISOString(),
+        message: `It's been 1 week since we spotted ${String(result.pest_name)} on your ${finalDisplayName}. Time for a follow-up scan to see if the treatment worked!`,
+      }).then(({ error: remErr }: { error: { message: string } | null }) => {
+        if (remErr) logger.warn('follow_up_reminder', `Insert failed: ${remErr.message}`)
+      })
+    }
+
     logger.endTimer('stage3_db')
     logger.info('stage3_db', 'Pipeline complete')
 

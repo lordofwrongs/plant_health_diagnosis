@@ -5,6 +5,55 @@ import { track } from '../utils/analytics.js'
 
 const BUCKET = 'plant_images'
 
+const OFFLINE_DB = 'botaniq_offline_v1'
+const OFFLINE_STORE = 'scan_queue'
+
+async function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(OFFLINE_DB, 1)
+    req.onupgradeneeded = (e) => e.target.result.createObjectStore(OFFLINE_STORE, { autoIncrement: true })
+    req.onsuccess = (e) => resolve(e.target.result)
+    req.onerror = (e) => reject(e.target.error)
+  })
+}
+async function idbEnqueue(item) {
+  const db = await idbOpen()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OFFLINE_STORE, 'readwrite')
+    tx.objectStore(OFFLINE_STORE).add(item).onsuccess = (e) => resolve(e.target.result)
+    tx.onerror = (e) => reject(e.target.error)
+  })
+}
+async function idbGetAll() {
+  const db = await idbOpen()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OFFLINE_STORE, 'readonly')
+    const results = []
+    tx.objectStore(OFFLINE_STORE).openCursor().onsuccess = (e) => {
+      const cursor = e.target.result
+      if (cursor) { results.push({ _key: cursor.key, ...cursor.value }); cursor.continue() }
+      else resolve(results)
+    }
+    tx.onerror = (e) => reject(e.target.error)
+  })
+}
+async function idbDelete(key) {
+  const db = await idbOpen()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OFFLINE_STORE, 'readwrite')
+    tx.objectStore(OFFLINE_STORE).delete(key).onsuccess = () => resolve()
+    tx.onerror = (e) => reject(e.target.error)
+  })
+}
+async function idbCount() {
+  const db = await idbOpen()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OFFLINE_STORE, 'readonly')
+    tx.objectStore(OFFLINE_STORE).count().onsuccess = (e) => resolve(e.target.result)
+    tx.onerror = (e) => reject(e.target.error)
+  })
+}
+
 const SLOTS = [
   { key: 'whole', label: 'Whole plant',    hint: 'Side angle, full plant visible', icon: '🌿' },
   { key: 'leaf',  label: 'Leaf close-up',  hint: 'Fill frame with leaf detail',    icon: '🍃' },
@@ -18,6 +67,8 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
   const [nickname, setNickname] = useState('')
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState(null)
+  const [offlineQueued, setOfflineQueued] = useState(0)
+  const callbackRef = useRef({ onUploadComplete, userLanguage })
   const [statusMessage, setStatusMessage] = useState('')
   const isProcessing = useRef(false)
   const [totalScans, setTotalScans] = useState(null)
@@ -33,6 +84,57 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
   const stemGalleryRef  = useRef()
   const slotCameraRefs  = { whole: wholeCameraRef,  leaf: leafCameraRef,  stem: stemCameraRef  }
   const slotGalleryRefs = { whole: wholeGalleryRef, leaf: leafGalleryRef, stem: stemGalleryRef }
+
+  // Keep callbackRef current so the online flush handler always has latest props
+  useEffect(() => { callbackRef.current = { onUploadComplete, userLanguage } }, [onUploadComplete, userLanguage])
+
+  // Load offline queue count on mount
+  useEffect(() => {
+    idbCount().then(n => setOfflineQueued(n)).catch(() => {})
+  }, [])
+
+  // Flush queued scans when the device comes back online
+  useEffect(() => {
+    const handleOnline = async () => {
+      const items = await idbGetAll().catch(() => [])
+      if (items.length === 0) return
+      const guestId = localStorage.getItem('plant_care_guest_id')
+      for (const item of items) {
+        try {
+          const imageUrls = await Promise.all(item.blobs.map(async (blob, i) => {
+            const file = new File([blob], `offline_${i}.jpg`, { type: 'image/jpeg' })
+            const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`
+            const { error: upErr } = await supabase.storage.from(BUCKET).upload(fileName, file)
+            if (upErr) throw new Error(upErr.message)
+            return supabase.storage.from(BUCKET).getPublicUrl(fileName).data.publicUrl
+          }))
+          const { data: record, error: dbErr } = await supabase
+            .from('plant_logs')
+            .insert({
+              user_id: guestId,
+              image_url: imageUrls[0],
+              additional_images: imageUrls.slice(1),
+              status: 'pending',
+              latitude: item.context?.lat,
+              longitude: item.context?.lng,
+              location_name: item.context?.name || 'Your Location',
+              plant_nickname: item.nickname || null,
+              preferred_language: item.userLanguage || 'English',
+            })
+            .select('id')
+            .single()
+          if (dbErr) throw new Error(dbErr.message)
+          await idbDelete(item._key)
+          setOfflineQueued(prev => Math.max(0, prev - 1))
+          callbackRef.current.onUploadComplete([record.id])
+        } catch (err) {
+          logger.error('UploadScreen', `Offline flush failed: ${err.message}`)
+        }
+      }
+    }
+    window.addEventListener('online', handleOnline)
+    return () => window.removeEventListener('online', handleOnline)
+  }, [])
 
   useEffect(() => {
     supabase.rpc('get_total_scans').then(({ data }) => {
@@ -149,6 +251,27 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
 
     const guestId = localStorage.getItem('plant_care_guest_id')
     logger.info('UploadScreen', `Submit: ${activeSlots.length} photo(s), lang=${userLanguage}`, { guest_id: guestId })
+
+    // FIX-30: Offline queue — save compressed blobs to IndexedDB, flush when back online
+    if (!navigator.onLine) {
+      try {
+        const [context, compressedFiles] = await Promise.all([
+          getLocationContext(),
+          Promise.all(activeSlots.map(slot => compressImage(slot.file))),
+        ])
+        await idbEnqueue({ blobs: compressedFiles, context, nickname, userLanguage })
+        setOfflineQueued(prev => prev + 1)
+        setSlotImages({ whole: null, leaf: null, stem: null })
+        setNickname('')
+        setError("You're offline — your scan has been saved and will upload automatically when you reconnect.")
+      } catch {
+        setError('Could not save scan offline. Please try again.')
+      } finally {
+        setUploading(false)
+        isProcessing.current = false
+      }
+      return
+    }
 
     try {
       const [context, compressedFiles] = await Promise.all([
@@ -346,6 +469,12 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
             disabled={uploading}
           />
         </div>
+
+        {offlineQueued > 0 && (
+          <div style={styles.offlineBox} role="status">
+            📶 {offlineQueued} scan{offlineQueued > 1 ? 's' : ''} queued — will upload when you reconnect
+          </div>
+        )}
 
         {error && <div style={styles.errorBox} role="alert">{error}</div>}
 
@@ -725,6 +854,18 @@ const styles = {
     outline: 'none',
     fontFamily: 'inherit',
     boxSizing: 'border-box',
+  },
+
+  offlineBox: {
+    background: '#EFF6FF',
+    border: '1px solid #BFDBFE',
+    borderRadius: 'var(--r-sm)',
+    padding: '10px 14px',
+    fontSize: '13px',
+    color: '#1E40AF',
+    marginBottom: '12px',
+    lineHeight: '1.4',
+    fontWeight: '500',
   },
 
   errorBox: {

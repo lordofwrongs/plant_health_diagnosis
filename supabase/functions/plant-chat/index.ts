@@ -77,6 +77,22 @@ serve(async (req: Request) => {
       return json({ error: 'Invalid user identity' }, 401)
     }
 
+    // FIX-07b: Rate limit — max 20 Q&A messages per user per 24 hours
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const { data: recentConvs } = await supabase
+      .from('plant_conversations')
+      .select('messages')
+      .eq('user_id', user_id)
+      .gte('updated_at', oneDayAgo)
+
+    const dailyQuestions = (recentConvs ?? []).reduce((total: number, conv: { messages: unknown }) => {
+      return total + ((conv.messages as Message[]) ?? []).filter((m: Message) => m.role === 'user').length
+    }, 0)
+
+    if (dailyQuestions >= 20) {
+      return json({ error: "Daily question limit reached. Your plants will still be here tomorrow!" }, 429)
+    }
+
     // Fetch plant context
     const { data: log, error: logError } = await supabase
       .from('plant_logs')

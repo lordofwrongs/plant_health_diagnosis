@@ -183,7 +183,7 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
         try {
           const { data } = await supabase
             .from('plant_logs')
-            .select('status, PlantName, ScientificName, AccuracyScore, HealthStatus, HealthColor, VisualAnalysis, CarePlan, ExpertTip, WeatherAlert, care_schedule, pest_detected, pest_name, pest_treatment, plantnet_candidates, vernacular_metadata, image_url, error_details, toxicity, light_intensity_analysis, seasonal_context, vital_signs, growth_milestones')
+            .select('status, PlantName, ScientificName, AccuracyScore, HealthStatus, HealthColor, VisualAnalysis, CarePlan, ExpertTip, WeatherAlert, care_schedule, pest_detected, pest_name, pest_treatment, plantnet_candidates, vernacular_metadata, image_url, error_details, toxicity, light_intensity_analysis, seasonal_context, vital_signs, growth_milestones, plant_classification')
             .eq('id', localResult.id)
             .single()
           if (data?.status === 'done') {
@@ -635,6 +635,11 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
           </div>
         )}
 
+        {/* Classification card */}
+        {localResult?.plant_classification && (
+          <ClassificationCard classification={localResult.plant_classification} />
+        )}
+
         {/* Scan history timeline */}
         {allScans.length > 1 && (
           <div className="fade-up-delay-2 verdant-card" style={styles.section}>
@@ -805,6 +810,86 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
       </div>
     </div>
   )
+}
+
+const PRIMARY_USE_CONFIG = {
+  vegetable:      { color: '#0D9488', bg: '#F0FDFA', label: 'Vegetable' },
+  fruit:          { color: '#F97316', bg: '#FFF7ED', label: 'Fruit' },
+  herb_culinary:  { color: '#D97706', bg: '#FFFBEB', label: 'Culinary Herb' },
+  herb_medicinal: { color: '#7C3AED', bg: '#F5F3FF', label: 'Medicinal Herb' },
+  ornamental:     { color: '#EC4899', bg: '#FDF2F8', label: 'Ornamental' },
+  weed:           { color: '#D97706', bg: '#FFFBEB', label: 'Weed' },
+  tree:           { color: '#1B4332', bg: '#F0FDF4', label: 'Tree' },
+  succulent:      { color: '#52B788', bg: '#F0FDF4', label: 'Succulent' },
+  invasive:       { color: '#DC2626', bg: '#FEF2F2', label: 'Invasive Plant' },
+  unknown:        { color: 'var(--text-3)', bg: 'var(--mist)', label: 'Unclassified' },
+}
+
+function ClassificationCard({ classification }) {
+  const cfg = PRIMARY_USE_CONFIG[classification.primary_use] || PRIMARY_USE_CONFIG.unknown
+  return (
+    <div className="fade-up-delay-2 verdant-card" style={{ padding: '24px' }}>
+      <h3 style={classifStyles.title}>Plant Classification</h3>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+        <span style={{ ...classifStyles.badge, color: cfg.color, background: cfg.bg, borderColor: cfg.color }}>
+          {cfg.label}
+        </span>
+        {classification.cultivation_status && classification.cultivation_status !== 'unknown' && (
+          <span style={classifStyles.statusChip}>{classification.cultivation_status}</span>
+        )}
+      </div>
+      {classification.is_edible && classification.edible_parts && (
+        <div style={classifStyles.edibleBox}>
+          <span style={classifStyles.boxIcon} aria-hidden="true">✅</span>
+          <div>
+            <p style={classifStyles.edibleTitle}>Edible parts</p>
+            <p style={classifStyles.edibleText}>{classification.edible_parts}</p>
+            {classification.edibility_notes && (
+              <p style={classifStyles.edibleNotes}>{classification.edibility_notes}</p>
+            )}
+          </div>
+        </div>
+      )}
+      {classification.is_weed && classification.weed_action && (
+        <div style={{ ...classifStyles.edibleBox, ...classifStyles.weedBox }}>
+          <span style={classifStyles.boxIcon} aria-hidden="true">⚠️</span>
+          <div>
+            <p style={{ ...classifStyles.edibleTitle, color: '#92400E' }}>Weed — removal recommended</p>
+            <p style={{ ...classifStyles.edibleText, color: '#78350F' }}>{classification.weed_action}</p>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const classifStyles = {
+  title: {
+    fontSize: '11px', fontWeight: '800', letterSpacing: '1px',
+    textTransform: 'uppercase', color: 'var(--text-3)', marginBottom: '14px',
+  },
+  badge: {
+    fontSize: '12px', fontWeight: '700', padding: '5px 14px',
+    borderRadius: 'var(--r-full)', border: '1px solid',
+  },
+  statusChip: {
+    fontSize: '11px', color: 'var(--text-3)', background: 'var(--mist)',
+    border: '1px solid var(--border)', borderRadius: 'var(--r-full)',
+    padding: '3px 10px', fontWeight: '600',
+  },
+  edibleBox: {
+    display: 'flex', gap: '10px', alignItems: 'flex-start',
+    background: '#F0FDF4', border: '1px solid #A7F3D0',
+    borderRadius: 'var(--r-sm)', padding: '12px 14px', marginTop: '10px',
+  },
+  weedBox: { background: '#FFFBEB', border: '1px solid #FDE68A' },
+  boxIcon: { fontSize: '16px', flexShrink: 0 },
+  edibleTitle: { fontSize: '11px', fontWeight: '700', color: '#065F46', margin: '0 0 3px' },
+  edibleText: { fontSize: '13px', color: '#064E3B', margin: 0, lineHeight: '1.4' },
+  edibleNotes: {
+    fontSize: '12px', color: '#047857', margin: '4px 0 0',
+    lineHeight: '1.4', fontStyle: 'italic',
+  },
 }
 
 const styles = {
