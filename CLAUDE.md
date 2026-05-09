@@ -98,7 +98,8 @@ plant_logs
   light_intensity_analysis text -- ✅ wired Sprint 16
   seasonal_context text         -- ✅ wired Sprint 16
   vital_signs jsonb             -- {hydration, light, nutrients, pest_risk} 0–100 scores — ✅ added Sprint 16, migration executed
-  growth_milestones jsonb       -- schema only, not yet in AI pipeline
+  growth_milestones jsonb       -- {narrative: string} — ✅ wired Sprint 18
+  plant_classification jsonb    -- {primary_use, is_edible, edible_parts, edibility_notes, is_weed, weed_action, cultivation_status} — ✅ added Sprint 20, migration executed
 
 push_subscriptions               -- ✅ created Sprint 13
   id uuid PK
@@ -131,6 +132,16 @@ user_profiles
   id uuid PK (= supabase auth user id)
   email, first_name, last_name, phone, guest_id, created_at
   email_digest_opt_out boolean DEFAULT false   -- ✅ added Sprint 17
+
+follow_up_reminders              -- ✅ created Sprint 20
+  id uuid PK
+  user_id text
+  log_id uuid FK → plant_logs
+  remind_at timestamptz         -- now + 7 days at insert time
+  message text
+  processed boolean DEFAULT false
+  created_at timestamptz
+  INDEX idx_reminders_time ON (remind_at) WHERE processed = false
 
 plantnet_cache
   image_hash text PK            -- SHA-256 of image bytes
@@ -236,6 +247,7 @@ RLS: `plant_logs` — anon insert + select + delete (by user_id). `users` — an
 | 17 | Weekly email digest: `weekly-digest` Supabase edge function sends a branded HTML email to all registered users every Sunday 8am UTC via **Brevo** API. Content: each user's plants with latest health status, watering countdown, pest alerts. Opt-out only — one-click unsubscribe link in email sets `users.email_digest_opt_out = true`. Scans matched via `users.guest_id` (how `plant_logs.user_id` is stored). **Secrets**: `BREVO_API_KEY`, `RESEND_FROM_EMAIL` (sender address verified in Brevo), `APP_URL`. **DB migrations**: `sprint17_weekly_digest.sql` + `ALTER TABLE users ADD COLUMN email_digest_opt_out boolean DEFAULT false` (run manually). **pg_cron**: `weekly-plant-digest` scheduled `0 8 * * 0`. ✅ **Confirmed working in production** — 2 emails delivered, cron active. |
 | Bug | Android camera fix: Android browsers opened file manager only (no camera option) because file inputs had no `capture` attribute. Fixed in `UploadScreen.jsx`: `isAndroid` UA detection via `useMemo` inside component; slot tap on Android shows a native-style bottom sheet ("📷 Take Photo / 🖼️ Choose from Gallery / Cancel"); each slot has two hidden inputs — `capture="environment"` for camera, no capture for gallery. iOS users unchanged — native iOS picker sheet unchanged. Scroll-lock `useEffect` prevents background scroll while sheet is open. |
 | 19 | **Security hardening + stability** (from comprehensive review): Q&A turn limit moved to DB-side enforcement (FIX-02); `plant-chat` user identity verified via JWT (FIX-03); PostgREST injection in nearby-scan query fixed (FIX-04); Gemini timeout added to `plant-chat` (FIX-05); polling changed to `status`-only then full fetch on done (FIX-06); rate limit 10 scans/user/day in `plant-processor` (FIX-07); `care-reminder` paginated to batches of 100 (FIX-08); language dropdown click-outside handler (FIX-09); Q&A cleared on correction re-run (FIX-10); correction poll race condition fixed (FIX-11); guest ID uses `crypto.randomUUID()` (FIX-12); Q&A question length capped at 500 chars (FIX-13); `isAndroid` moved into component (FIX-14); PlantNet cache TTL 60 days (FIX-15); misleading Bearer check removed from `care-reminder` (FIX-16); daily guest log cleanup cron at 3am UTC — job ID 3 (FIX-17); anon delete RLS tightened (FIX-27). **Migrations run**: `security_rls_plant_logs.sql`, `sprint19_cleanup_cron.sql`. ✅ All edge functions redeployed. ✅ Frontend deployed via Vercel push. |
+| 20 | **Classification UI + pest reminders + offline queue + Q&A rate limit** (FIX-18, FIX-28, FIX-30, FIX-07b): (1) **ClassificationCard** in `ResultsScreen` — `primary_use` badge (teal=veg, amber=weed, etc.), edible parts + notes section, amber weed-removal action box. Reads from `plant_classification` jsonb. (2) **Pest follow-up reminders** (FIX-28) — `plant-processor` inserts a row in `follow_up_reminders` (remind_at = now + 7 days) after every pest-detected scan; message names the pest and plant. (3) **Offline scan queue** (FIX-30) — `UploadScreen` checks `navigator.onLine`; offline path compresses images and saves blobs + metadata to IndexedDB (`botaniq_offline_v1`). `window online` event auto-flushes: uploads to Storage, inserts `plant_logs` record, calls `onUploadComplete`. Blue banner shows queued count. (4) **Q&A daily rate limit** (FIX-07b) — `plant-chat` sums `role: 'user'` messages across all `plant_conversations` for the user updated in the last 24 hours; returns 429 at ≥20. **DB migration**: `sprint20_classification_reminders.sql` — adds `plant_classification jsonb` column + creates `follow_up_reminders` table with cron-friendly index. ✅ `plant-processor` + `plant-chat` redeployed. ✅ Frontend deployed via git push → Vercel. |
 
 ---
 
@@ -246,8 +258,8 @@ RLS: `plant_logs` — anon insert + select + delete (by user_id). `users` — an
 | **Deep Botanical Diagnostics** | ✅ Done (Sprint 19) — `plant-processor` instruction 15 analyzes pot-to-foliage ratio and interveinal chlorosis patterns. | High: Expert-level accuracy. |
 | **Security Status Guarding** | ✅ Done (Sprint 19) — replay/double-processing guarded with 404/409; rate-limited to 10 scans/user/day. | Medium: Cost/Security safety. |
 | **UX De-congestion (Insights Tab)** | Consolidate `Vital Signs`, `Toxicity`, and `Environment` cards into a single "Health Insights" tabbed component in `ResultsScreen`. | High: Reduces scroll height by 40%. |
-| **Offline Scan Queue** | Implement `Background Sync` API in `sw.js` and a "Pending Upload" persistent queue in `IndexedDB`. | High: Works in gardens/greenhouses. |
-| **Plant Classification (Edibility)** | Add `plant_classification` field to Gemini schema: `primary_use`, `is_edible`, `edible_parts`, `is_weed`, `weed_action`. Show as a card in ResultsScreen. DB migration needed. | High: Home gardeners need to know "can I eat this?" |
+| **Offline Scan Queue** | ✅ Done (Sprint 20) — IndexedDB queue in `UploadScreen`; auto-flushes on `window online` event. | High: Works in gardens/greenhouses. |
+| **Plant Classification (Edibility)** | ✅ Done (Sprint 20) — `ClassificationCard` in ResultsScreen; `plant_classification` jsonb in Gemini schema + DB. | High: Home gardeners need to know "can I eat this?" |
 | **Personal Data Masking** | Sanitize `logger.js` to ensure User IDs and Emails never leak into console/session logs. | Medium: Privacy compliance. |
 
 ---
