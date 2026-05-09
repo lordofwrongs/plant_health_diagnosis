@@ -5,6 +5,7 @@ import ResultsScreen from './components/ResultsScreen.jsx'
 import HistoryScreen from './components/HistoryScreen.jsx'
 import PlantDetailScreen from './components/PlantDetailScreen.jsx'
 import RegisterModal from './components/RegisterModal.jsx'
+import SupportModal from './components/SupportModal.jsx'
 import { supabase } from './supabaseClient.js'
 import { track, identify } from './utils/analytics.js'
 
@@ -37,6 +38,7 @@ export default function App() {
     return saved ? JSON.parse(saved) : { language: 'English' }
   })
   const [showSettings, setShowSettings] = useState(false)
+  const [showSupportModal, setShowSupportModal] = useState(false)
 
   // Ensure guest_id exists for anonymous users (FIX-12: use crypto.randomUUID for unpredictability)
   useEffect(() => {
@@ -199,33 +201,43 @@ export default function App() {
           </button>
         </div>
 
-        {/* Language selector */}
-        <div ref={langDropdownRef} style={{ position: 'relative' }}>
-          <button onClick={() => setShowSettings(!showSettings)} style={styles.langToggle}>
-            <span style={styles.globeIcon}>🌐</span>
-            <span style={styles.langCode}>
-              {preferences.language === 'English' ? 'EN' : preferences.language.slice(0, 2).toUpperCase()}
-            </span>
-          </button>
+        {/* Right-side controls: language selector + support */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div ref={langDropdownRef} style={{ position: 'relative' }}>
+            <button onClick={() => setShowSettings(!showSettings)} style={styles.langToggle}>
+              <span style={styles.globeIcon}>🌐</span>
+              <span style={styles.langCode}>
+                {preferences.language === 'English' ? 'EN' : preferences.language.slice(0, 2).toUpperCase()}
+              </span>
+            </button>
 
-          {showSettings && (
-            <div style={styles.langDropdown}>
-              <p style={styles.langDropdownLabel}>Display language</p>
-              {LANGUAGES.map(lang => (
-                <button
-                  key={lang}
-                  onClick={() => { setPreferences({ ...preferences, language: lang }); setShowSettings(false) }}
-                  style={{
-                    ...styles.langOption,
-                    ...(preferences.language === lang ? styles.langOptionActive : {}),
-                  }}
-                >
-                  {lang}
-                  {preferences.language === lang && <span style={styles.langCheck}>✓</span>}
-                </button>
-              ))}
-            </div>
-          )}
+            {showSettings && (
+              <div style={styles.langDropdown}>
+                <p style={styles.langDropdownLabel}>Display language</p>
+                {LANGUAGES.map(lang => (
+                  <button
+                    key={lang}
+                    onClick={() => { setPreferences({ ...preferences, language: lang }); setShowSettings(false) }}
+                    style={{
+                      ...styles.langOption,
+                      ...(preferences.language === lang ? styles.langOptionActive : {}),
+                    }}
+                  >
+                    {lang}
+                    {preferences.language === lang && <span style={styles.langCheck}>✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={() => setShowSupportModal(true)}
+            aria-label="Contact support"
+            style={styles.supportBtn}
+          >
+            ?
+          </button>
         </div>
       </nav>
 
@@ -302,6 +314,11 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Support modal ───────────────────────────────────── */}
+      {showSupportModal && (
+        <SupportModal onClose={() => setShowSupportModal(false)} />
       )}
 
       {/* ── Registration modal ──────────────────────────────── */}
@@ -505,6 +522,23 @@ const styles = {
     fontWeight: '700',
   },
   langCheck: { color: 'var(--leaf)', fontWeight: '900', fontSize: '13px' },
+
+  supportBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '28px',
+    height: '28px',
+    borderRadius: '50%',
+    border: '1.5px solid var(--border)',
+    background: 'var(--mist)',
+    color: 'var(--primary)',
+    fontSize: '13px',
+    fontWeight: '800',
+    cursor: 'pointer',
+    flexShrink: 0,
+    lineHeight: 1,
+  },
 
   mainContent: { flex: 1, display: 'flex', flexDirection: 'column' },
 }

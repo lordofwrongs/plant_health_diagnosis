@@ -39,6 +39,15 @@ function ErrorFallback() {
       >
         Reload app
       </button>
+      <p style={{ marginTop: '20px', fontSize: '13px', color: '#999' }}>
+        Still having trouble?{' '}
+        <a
+          href="mailto:botaniqsupport@gmail.com?subject=BotanIQ%20Error%20Report"
+          style={{ color: '#1B4332', fontWeight: '600', textDecoration: 'underline' }}
+        >
+          Contact support
+        </a>
+      </p>
     </div>
   )
 }
