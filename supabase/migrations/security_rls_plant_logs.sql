@@ -36,14 +36,16 @@ CREATE POLICY "authenticated delete own logs"
   ON plant_logs FOR DELETE TO authenticated
   USING (auth.uid()::text = user_id);
 
--- Anon (guest) users: open access until Anonymous Auth migration
+-- Anon (guest) users: restricted to rows with a non-null user_id (better than USING (true),
+-- but still allows any anon-key caller to delete any guest row). Full per-device isolation
+-- requires Supabase Anonymous Auth so each device gets a verifiable JWT — deferred as future work.
 CREATE POLICY "anon select logs"
   ON plant_logs FOR SELECT TO anon
-  USING (true);
+  USING (user_id IS NOT NULL);
 
 CREATE POLICY "anon delete logs"
   ON plant_logs FOR DELETE TO anon
-  USING (true);
+  USING (user_id IS NOT NULL);
 
 -- INSERT: open for anon (guest scans), scoped for authenticated users
 DO $$

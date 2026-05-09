@@ -61,19 +61,23 @@ export default function AnalysingScreen({ logId, onResultReady, onError }) {
     // 2. HTTP polling fallback (catches missed WebSocket events on mobile /
     //    poor networks or when the WS connection drops silently)
     // ------------------------------------------------------------------
+    // FIX-06: Poll status+error_details only; fetch full record once done to avoid large JSONB transfer every 8s
     const pollTimer = setInterval(async () => {
       if (resolvedRef.current) return
       try {
-        const { data, error } = await supabase
+        const { data: poll, error } = await supabase
           .from('plant_logs')
-          .select('*')
+          .select('status, error_details')
           .eq('id', logId)
           .single()
         if (error) { logger.warn('AnalysingScreen', `Poll error: ${error.message}`, { record_id: logId }); return }
-        logger.info('AnalysingScreen', `Poll result: status=${data?.status}`, { record_id: logId })
-        if (data?.status === 'done')          resolve(data)
-        if (data?.status === 'error')         fail(data?.error_details || 'Analysis failed. Please try again.')
-        if (data?.status === 'quality_issue') needsBetterPhoto(data?.error_details || 'Please take a clearer photo of the plant.')
+        logger.info('AnalysingScreen', `Poll result: status=${poll?.status}`, { record_id: logId })
+        if (poll?.status === 'done') {
+          const { data: full } = await supabase.from('plant_logs').select('*').eq('id', logId).single()
+          resolve(full)
+        }
+        if (poll?.status === 'error')         fail(poll?.error_details || 'Analysis failed. Please try again.')
+        if (poll?.status === 'quality_issue') needsBetterPhoto(poll?.error_details || 'Please take a clearer photo of the plant.')
       } catch (e) {
         logger.warn('AnalysingScreen', `Poll exception: ${e?.message}`, { record_id: logId })
       }

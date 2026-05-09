@@ -30,6 +30,7 @@ export default function App() {
   const [showRegisterModal, setShowRegisterModal] = useState(false)
   const [showCelebration, setShowCelebration] = useState(false)
   const celebrationTimerRef = useRef(null)
+  const langDropdownRef = useRef(null)
 
   const [preferences, setPreferences] = useState(() => {
     const saved = localStorage.getItem('plant_care_prefs')
@@ -37,12 +38,24 @@ export default function App() {
   })
   const [showSettings, setShowSettings] = useState(false)
 
-  // Ensure guest_id exists for anonymous users
+  // Ensure guest_id exists for anonymous users (FIX-12: use crypto.randomUUID for unpredictability)
   useEffect(() => {
     if (!localStorage.getItem('plant_care_guest_id')) {
-      localStorage.setItem('plant_care_guest_id', `guest_${Math.random().toString(36).slice(2, 11)}`)
+      localStorage.setItem('plant_care_guest_id', `guest_${crypto.randomUUID()}`)
     }
   }, [])
+
+  // FIX-09: Close language dropdown when user clicks outside it
+  useEffect(() => {
+    if (!showSettings) return
+    const handler = (e) => {
+      if (langDropdownRef.current && !langDropdownRef.current.contains(e.target)) {
+        setShowSettings(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showSettings])
 
   useEffect(() => {
     track('app_opened', { is_returning: !!localStorage.getItem('botaniq_first_scan') })
@@ -187,7 +200,7 @@ export default function App() {
         </div>
 
         {/* Language selector */}
-        <div style={{ position: 'relative' }}>
+        <div ref={langDropdownRef} style={{ position: 'relative' }}>
           <button onClick={() => setShowSettings(!showSettings)} style={styles.langToggle}>
             <span style={styles.globeIcon}>🌐</span>
             <span style={styles.langCode}>

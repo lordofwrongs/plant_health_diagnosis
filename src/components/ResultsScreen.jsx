@@ -162,29 +162,41 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
       setCorrectionOpen(false)
       setRerunning(true)
       setRerunError(null)
+      // FIX-10: Clear stale Q&A so old conversation doesn't show after re-identification
+      setQaMessages([])
+      setQaLoaded(false)
+      setQaOpen(false)
 
-      // Poll every 3s for up to 90s
+      // Poll every 3s for up to 90s (FIX-11: active flag prevents overlapping in-flight queries)
       const start = Date.now()
+      let active = true
       pollRef.current = setInterval(async () => {
+        if (!active) return
         if (Date.now() - start > 90000) {
+          active = false
           clearInterval(pollRef.current)
           setRerunning(false)
           setRerunError('Re-analysis timed out. Your correction has been saved.')
           return
         }
-        const { data } = await supabase
-          .from('plant_logs')
-          .select('status, PlantName, ScientificName, AccuracyScore, HealthStatus, HealthColor, VisualAnalysis, CarePlan, ExpertTip, WeatherAlert, care_schedule, pest_detected, pest_name, pest_treatment, plantnet_candidates, vernacular_metadata, image_url, error_details, toxicity, light_intensity_analysis, seasonal_context, vital_signs, growth_milestones')
-          .eq('id', localResult.id)
-          .single()
-        if (data?.status === 'done') {
-          clearInterval(pollRef.current)
-          setLocalResult(prev => ({ ...prev, ...data }))
-          setRerunning(false)
-        } else if (data?.status === 'error') {
-          clearInterval(pollRef.current)
-          setRerunning(false)
-          setRerunError('Re-analysis failed. Your correction has been saved.')
+        active = false
+        try {
+          const { data } = await supabase
+            .from('plant_logs')
+            .select('status, PlantName, ScientificName, AccuracyScore, HealthStatus, HealthColor, VisualAnalysis, CarePlan, ExpertTip, WeatherAlert, care_schedule, pest_detected, pest_name, pest_treatment, plantnet_candidates, vernacular_metadata, image_url, error_details, toxicity, light_intensity_analysis, seasonal_context, vital_signs, growth_milestones')
+            .eq('id', localResult.id)
+            .single()
+          if (data?.status === 'done') {
+            clearInterval(pollRef.current)
+            setLocalResult(prev => ({ ...prev, ...data }))
+            setRerunning(false)
+          } else if (data?.status === 'error') {
+            clearInterval(pollRef.current)
+            setRerunning(false)
+            setRerunError('Re-analysis failed. Your correction has been saved.')
+          }
+        } finally {
+          active = true
         }
       }, 3000)
     } catch (err) {

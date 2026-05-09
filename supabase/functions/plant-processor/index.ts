@@ -350,10 +350,28 @@ serve(async (req: Request) => {
       status: 404, headers: { 'Content-Type': 'application/json' },
     })
   }
-  if (guard.status !== 'pending') {
+  
+  // Security: Guard against replay/double-processing unless this is a user-initiated correction
+  if (guard.status !== 'pending' && !userCorrection) {
     return new Response(JSON.stringify({ error: `Record is not in pending state (current: ${guard.status})` }), {
       status: 409, headers: { 'Content-Type': 'application/json' },
     })
+  }
+
+  // FIX-07: Rate limit — max 10 new scans per user per day (corrections exempt: no PlantNet call)
+  if (!userCorrection) {
+    const todayStart = new Date()
+    todayStart.setUTCHours(0, 0, 0, 0)
+    const { count: todayCount } = await supabase
+      .from('plant_logs')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', user_id)
+      .gte('created_at', todayStart.toISOString())
+    if ((todayCount ?? 0) >= 10) {
+      return new Response(JSON.stringify({ error: 'Daily scan limit reached. Please try again tomorrow.' }), {
+        status: 429, headers: { 'Content-Type': 'application/json' },
+      })
+    }
   }
 
   logger.info('init', `Pipeline started — ${image_url}`)
@@ -425,10 +443,14 @@ serve(async (req: Request) => {
       (async () => {
         if (userCorrection) return null  // skip — use correctionCandidates instead
 
+        // FIX-15: Ignore cache entries older than 60 days so stale IDs don't persist
+        const cacheCutoff = new Date()
+        cacheCutoff.setDate(cacheCutoff.getDate() - 60)
         const { data: cached } = await supabase
           .from('plantnet_cache')
           .select('result')
           .eq('image_hash', imageHash)
+          .gte('created_at', cacheCutoff.toISOString())
           .maybeSingle()
 
         if (cached?.result) {
@@ -458,15 +480,27 @@ serve(async (req: Request) => {
       })(),
 
       // 1b. Previous scan history for this plant/location
-      supabase
-        .from('plant_logs')
-        .select('VisualAnalysis, HealthStatus, PlantName, created_at')
-        .eq('user_id', user_id)
-        .eq('status', 'done')
-        .lt('created_at', log.created_at)
-        .or(`and(latitude.gte.${log.latitude - threshold},latitude.lte.${log.latitude + threshold},longitude.gte.${log.longitude - threshold},longitude.lte.${log.longitude + threshold}),plant_nickname.eq.${nickname ? `'${nickname.replace(/'/g, "''")}'` : 'null'}`)
-        .order('created_at', { ascending: false })
-        .limit(1),
+      // FIX-04: Use parameterized query methods instead of string-interpolated .or() to prevent injection
+      (() => {
+        let q = supabase
+          .from('plant_logs')
+          .select('VisualAnalysis, HealthStatus, PlantName, created_at')
+          .eq('user_id', user_id)
+          .eq('status', 'done')
+          .lt('created_at', log.created_at)
+          .order('created_at', { ascending: false })
+          .limit(1)
+        if (nickname) {
+          q = q.eq('plant_nickname', nickname)
+        } else if (log.latitude && log.longitude) {
+          q = q
+            .gte('latitude', log.latitude - threshold)
+            .lte('latitude', log.latitude + threshold)
+            .gte('longitude', log.longitude - threshold)
+            .lte('longitude', log.longitude + threshold)
+        }
+        return q
+      })(),
 
       // 1c. Weather context
       fetchWeather(log.latitude, log.longitude, logger),
@@ -687,7 +721,8 @@ STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
 11. PEST DETECTION: Holes, webbing, or visible insects.
 12. VITAL SIGNS — rate 0–100 from visual evidence only. hydration: leaf turgor, wilting, soil moisture cues. light: growth direction, stretch, leaf colour. nutrients: colour uniformity, chlorosis, vigour. pest_risk: visible damage, webbing, insects (0 = none, 100 = severe).
 13. SEASONAL CONTEXT: 1–2 sentences on care adjustments for ${new Date().toLocaleString('default', { month: 'long' })} in the ${(log.latitude ?? 0) >= 0 ? 'Northern' : 'Southern'} Hemisphere in ${userLang}.
-14. GROWTH NARRATIVE: ${nearbyLogs?.length ? `The previous scan showed this plant as "${nearbyLogs[0].HealthStatus}". Write 1–2 warm, specific sentences comparing the current condition to that previous scan — what has improved, stayed the same, or needs attention. Be encouraging and concrete. Write in ${userLang}.` : 'This is the first scan for this plant. Set growth_narrative to null.'}`,
+14. GROWTH NARRATIVE: ${nearbyLogs?.length ? `The previous scan showed this plant as "${nearbyLogs[0].HealthStatus}". Write 1–2 warm, specific sentences comparing the current condition to that previous scan — what has improved, stayed the same, or needs attention. Be encouraging and concrete. Write in ${userLang}.` : 'This is the first scan for this plant. Set growth_narrative to null.'}
+15. BOTANICAL EXPERTISE: Specifically look for signs of being 'root-bound' by analyzing the pot-to-foliage size ratio. Also check for specific nutrient deficiencies (e.g., interveinal chlorosis for Magnesium, yellowing new growth for Iron). Mention these specific conditions in the 'analysis' and 'recovery_steps' if detected.`,
       imageBase64, imageMimeType, logger, 'stage2_analysis',
       0.1, 45000, extraImages, PLANT_ANALYSIS_SCHEMA
     )
@@ -754,7 +789,7 @@ STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
       .from('plant_logs')
       .update({
         PlantName:          finalDisplayName,
-        ScientificName:     result.final_scientific_name ?? result.scientific_name,
+        ScientificName:     result.final_scientific_name ?? 'Unknown',
         AccuracyScore:      finalScore,
         HealthStatus:       result.health_status,
         HealthColor:        healthColor,

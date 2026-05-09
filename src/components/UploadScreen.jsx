@@ -1,10 +1,9 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { supabase } from '../supabaseClient.js'
 import { logger } from '../logger.js'
 import { track } from '../utils/analytics.js'
 
 const BUCKET = 'plant_images'
-const isAndroid = /Android/i.test(navigator.userAgent)
 
 const SLOTS = [
   { key: 'whole', label: 'Whole plant',    hint: 'Side angle, full plant visible', icon: '🌿' },
@@ -13,6 +12,8 @@ const SLOTS = [
 ]
 
 export default function UploadScreen({ onUploadComplete, userLanguage }) {
+  // FIX-14: Moved inside component to avoid crashes in non-browser environments (tests, SSR)
+  const isAndroid = useMemo(() => /Android/i.test(navigator.userAgent), [])
   const [slotImages, setSlotImages] = useState({ whole: null, leaf: null, stem: null })
   const [nickname, setNickname] = useState('')
   const [uploading, setUploading] = useState(false)

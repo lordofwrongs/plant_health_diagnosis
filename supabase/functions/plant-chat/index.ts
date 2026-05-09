@@ -7,6 +7,7 @@ interface Message {
 }
 
 const MAX_TURNS = 3
+const MAX_QUESTION_LENGTH = 500  // FIX-13
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -20,14 +21,28 @@ function json(body: unknown, status = 200) {
   })
 }
 
+// FIX-05: Timeout wrapper prevents Gemini from hanging the edge function for 150s
+async function fetchWithTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), ms)
+  try { return await fetch(url, { ...init, signal: ctrl.signal }) }
+  finally { clearTimeout(t) }
+}
+
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
   try {
-    const { log_id, user_id, question, messages = [] } = await req.json()
+    // FIX-02: 'messages' from request body intentionally ignored — DB record is authoritative
+    const { log_id, user_id: bodyUserId, question } = await req.json()
 
-    if (!log_id || !user_id || !question?.trim()) {
+    if (!log_id || !bodyUserId || !question?.trim()) {
       return json({ error: 'Missing required fields: log_id, user_id, question' }, 400)
+    }
+
+    // FIX-13: Validate question length before any DB work
+    if (question.length > MAX_QUESTION_LENGTH) {
+      return json({ error: `Question must be 1–${MAX_QUESTION_LENGTH} characters` }, 400)
     }
 
     const supabase = createClient(
@@ -36,10 +51,30 @@ serve(async (req: Request) => {
     )
     const GEMINI_KEY = Deno.env.get('GEMINI_API_KEY') ?? ''
 
-    // Enforce turn limit before doing any work
-    const userTurns = (messages as Message[]).filter(m => m.role === 'user').length
-    if (userTurns >= MAX_TURNS) {
-      return json({ error: 'max_turns_reached' }, 400)
+    // FIX-03: Verify user identity from JWT, not just the request body.
+    // Authenticated users must present a valid Supabase JWT. Guests must pass a guest_-prefixed ID.
+    const authHeader = req.headers.get('Authorization') ?? ''
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+
+    let user_id: string
+    if (token) {
+      const userClient = createClient(
+        Deno.env.get('SUPABASE_URL') ?? '',
+        Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+        { global: { headers: { Authorization: `Bearer ${token}` } } }
+      )
+      const { data: { user } } = await userClient.auth.getUser()
+      if (user?.id) {
+        user_id = user.id  // JWT-verified identity; ignore request body user_id
+      } else if ((bodyUserId as string)?.startsWith('guest_')) {
+        user_id = bodyUserId as string  // Anon-key token — treat as guest
+      } else {
+        return json({ error: 'Invalid user identity' }, 401)
+      }
+    } else if ((bodyUserId as string)?.startsWith('guest_')) {
+      user_id = bodyUserId as string
+    } else {
+      return json({ error: 'Invalid user identity' }, 401)
     }
 
     // Fetch plant context
@@ -53,9 +88,25 @@ serve(async (req: Request) => {
       return json({ error: 'Plant not found' }, 404)
     }
 
+    // FIX-02: Fetch stored conversation — DB record is the authoritative turn counter and history.
+    // Clients cannot bypass the limit by sending messages: [] in the request body.
+    const { data: storedConv } = await supabase
+      .from('plant_conversations')
+      .select('id, messages')
+      .eq('log_id', log_id)
+      .eq('user_id', user_id)
+      .maybeSingle()
+
+    const storedMessages: Message[] = (storedConv?.messages ?? []) as Message[]
+    const storedTurns = storedMessages.filter((m: Message) => m.role === 'user').length
+
+    if (storedTurns >= MAX_TURNS) {
+      return json({ error: 'max_turns_reached' }, 400)
+    }
+
     // For registered users, fetch prior Q&A on the same plant for personalisation
     let priorContext = ''
-    const isGuest = !user_id || (user_id as string).startsWith('guest_')
+    const isGuest = user_id.startsWith('guest_')
     if (!isGuest && log.PlantName) {
       const { data: priorConvs } = await supabase
         .from('plant_conversations')
@@ -122,16 +173,16 @@ RULES:
 - Respond in ${userLang}
 - Be warm and encouraging`
 
-    const conversationHistory = messages as Message[]
     const newMsg: Message = { role: 'user', content: question.trim() }
-    const allMessages = [...conversationHistory, newMsg]
+    const allMessages: Message[] = [...storedMessages, newMsg]  // DB history is authoritative
 
     const contents = allMessages.map((m: Message) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }],
     }))
 
-    const geminiRes = await fetch(
+    // FIX-05: 30s timeout prevents slow Gemini responses from blocking the edge function
+    const geminiRes = await fetchWithTimeout(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`,
       {
         method: 'POST',
@@ -145,7 +196,8 @@ RULES:
             thinkingConfig: { thinkingBudget: 0 },
           },
         }),
-      }
+      },
+      30000
     )
 
     if (!geminiRes.ok) {
@@ -165,19 +217,12 @@ RULES:
       { role: 'assistant', content: answer },
     ]
 
-    // Upsert conversation record
-    const { data: existing } = await supabase
-      .from('plant_conversations')
-      .select('id')
-      .eq('log_id', log_id)
-      .eq('user_id', user_id)
-      .maybeSingle()
-
-    if (existing?.id) {
+    // Upsert using the DB-fetched record ID when available (avoids a redundant lookup)
+    if (storedConv?.id) {
       await supabase
         .from('plant_conversations')
         .update({ messages: updatedMessages, updated_at: new Date().toISOString() })
-        .eq('id', existing.id)
+        .eq('id', storedConv.id)
     } else {
       await supabase
         .from('plant_conversations')

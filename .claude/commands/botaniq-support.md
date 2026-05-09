@@ -215,6 +215,14 @@ Invoke-RestMethod -Uri "https://thgdxffelonamukytosq.supabase.co/functions/v1/we
 - Check `RESEND_FROM_EMAIL` secret is set (used as Brevo sender name+email)
 - Verify Brevo sender address is verified in Brevo dashboard
 
+### 18. "Android users can't take a photo — only sees file manager"
+- **Root cause**: Android Chrome/Samsung Internet triggers the OS file manager (no camera option) when a file input has only `accept="image/*"` and no `capture` attribute
+- **Fix shipped**: `UploadScreen.jsx` now detects Android via `navigator.userAgent` and shows a native-style bottom sheet ("Take Photo / Choose from Gallery") when a slot is tapped. iOS users are **unaffected** — they continue to receive the native iOS picker sheet as before
+- **Architecture**: Each slot has two hidden inputs — one with `capture="environment"` (camera, Android only) and one without (gallery / iOS path). The bottom sheet only renders when `sheetSlotKey` state is set, which only happens on Android
+- **Browser coverage**: Android Chrome ✅ Samsung Internet ✅ Android Firefox ✅ — iOS Safari/Chrome/Firefox all unchanged ✅
+- If the sheet appears but camera still doesn't open: check the device has granted camera permissions to the browser (Settings → Apps → Chrome → Permissions → Camera)
+- If the sheet doesn't appear at all on Android: check the UA detection — some Android tablets report as desktop; the fallback (gallery input) still works, just no camera shortcut
+
 ---
 
 ## Key Files for Fixes

@@ -6,13 +6,17 @@
 const SESSION_KEY = 'plantcare_session_logs'
 const MAX_ENTRIES = 300
 
-function write(level, component, message, meta = {}) {
+function write(level, component, message, rawMeta = {}) {
+  // Security: Sanitize sensitive user data from logs to prevent PII leakage
+  const { email, phone, user_id, ...meta } = rawMeta;
+  const sanitizedMeta = { ...meta, has_identity: !!(email || user_id || rawMeta.guest_id) };
+
   const entry = {
     ts: new Date().toISOString(),
     level,
     component,
     message,
-    ...meta,
+    ...sanitizedMeta,
   }
 
   const line = `[PlantCare/${component}] ${message}`

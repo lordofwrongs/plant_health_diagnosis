@@ -229,6 +229,24 @@ To move from a production MVP to a hardened application, the following security 
 | 16 | AI pipeline enrichments + UX polish + Voice Q&A: (1) **AI enrichments** — `toxicity`, `light_intensity_analysis`, `seasonal_context`, `vital_signs` (hydration/light/nutrients/pest_risk 0–100 scores) now wired through Gemini prompt → DB → UI. `vital_signs` stored in new `plant_logs.vital_signs jsonb` column (migration: `sprint16_enrichments.sql`). (2) **Vital Signs meters** — 4-row progress bar panel in ResultsScreen, teal/amber/red by score, pest_risk inverted. (3) **Toxicity/Safety card** — per-species cat/dog/human risk with colour-coded pills. (4) **Environment card** — light analysis + seasonal care note. (5) **Colourblind-safe palette** — `healthCategoryToColor()` changed from green/red to teal (`#0D9488`)/amber/red; `--healthy` CSS var updated. (6) **HistoryScreen skeleton** — 4-card shimmer grid replaces loading spinner. (7) **Voice Q&A** — 🎤 mic button in Q&A input row, Web Speech API (`SpeechRecognition`/`webkitSpeechRecognition`), language-aware (en-US/hi-IN/ta-IN/te-IN), pulsing teal animation while listening, gracefully hidden when unsupported. ✅ **Confirmed working in production** (Bell Pepper scan verified). DB migration executed. Edge function deployed. |
 | 18 | UX polish — final sprint: (1) **Growth narratives** — Gemini instruction 14 added to `plant-processor`: when prior scan history exists, generates a 1–2 sentence warm comparison stored in `plant_logs.growth_milestones.narrative`. Shown in Health Journey card, replaces generic "conditions remain consistent" text. (2) **ResultsScreen correction skeleton** — when re-analysis runs after user submits a correction, 4 shimmer placeholder cards replace stale content instead of showing old data with just a banner. (3) **Care reminder nudge** — "🔔 Set watering reminders in My Garden →" button appears at the bottom of the Care Schedule card, calls `onBack()` to navigate to PlantDetailScreen. ✅ Edge function deployed. Frontend auto-deployed via Vercel push. |
 | 17 | Weekly email digest: `weekly-digest` Supabase edge function sends a branded HTML email to all registered users every Sunday 8am UTC via **Brevo** API. Content: each user's plants with latest health status, watering countdown, pest alerts. Opt-out only — one-click unsubscribe link in email sets `users.email_digest_opt_out = true`. Scans matched via `users.guest_id` (how `plant_logs.user_id` is stored). **Secrets**: `BREVO_API_KEY`, `RESEND_FROM_EMAIL` (sender address verified in Brevo), `APP_URL`. **DB migrations**: `sprint17_weekly_digest.sql` + `ALTER TABLE users ADD COLUMN email_digest_opt_out boolean DEFAULT false` (run manually). **pg_cron**: `weekly-plant-digest` scheduled `0 8 * * 0`. ✅ **Confirmed working in production** — 2 emails delivered, cron active. |
+| Bug | Android camera fix: Android browsers opened file manager only (no camera option) because file inputs had no `capture` attribute. Fixed in `UploadScreen.jsx`: `isAndroid` UA detection at module level; slot tap on Android shows a native-style bottom sheet ("📷 Take Photo / 🖼️ Choose from Gallery / Cancel"); each slot has two hidden inputs — `capture="environment"` for camera, no capture for gallery. iOS users unchanged — native iOS picker sheet unchanged. Scroll-lock `useEffect` prevents background scroll while sheet is open. |
+
+---
+
+## Priority Enhancements
+
+| Enhancement | Solution | UX Impact |
+|---|---|---|
+| **Deep Botanical Diagnostics** | Update `plant-processor` Gemini prompt to analyze "pot-to-foliage ratio" (root-bound detection) and "interveinal chlorosis patterns" (magnesium vs iron deficiency). | High: Expert-level accuracy. |
+| **UX De-congestion (Insights Tab)** | Consolidate `Vital Signs`, `Toxicity`, and `Environment` cards into a single "Health Insights" tabbed component in `ResultsScreen`. | High: Reduces scroll height by 40%. |
+| **Offline Scan Queue** | Implement `Background Sync` API in `sw.js` and a "Pending Upload" persistent queue in `IndexedDB`. | High: Works in gardens/greenhouses. |
+| **Security Status Guarding** | Prevent re-processing of `done` or `error` records in `plant-processor` to save costs and prevent replay attacks. | Medium: Cost/Security safety. |
+| **Personal Data Masking** | Sanitize the frontend `logger.js` to ensure User IDs and Emails never leak into console/session logs. | Medium: Privacy compliance. |
+
+### Solution Implementation Guide
+1. **Botanical Logic**: In `plant-processor/index.ts`, add Instruction 15: "Analyze the container size relative to the plant habit; if the plant looks top-heavy or pot-bound, include 'Repotting' in care steps."
+2. **Real Estate Optimization**: Modify `ResultsScreen.jsx` to use a segmented control (Tabs) for "Care Plan", "Health Insights", and "Plant Info" to keep primary actions above the fold.
+3. **Hardening**: Add `if (guard.status !== 'pending')` check to edge functions.
 
 ---
 
@@ -297,3 +315,4 @@ curl -s https://plant-health-diagnosis.vercel.app | grep title
 - `AccuracyScore = 0` on old records = pre-cross-validation pipeline. Display-only issue, no fix needed.
 - HEIC files are rejected client-side in UploadScreen — by design. Users must export as JPEG.
 - PlantNet free tier resets at midnight UTC. Gemini-only fallback fires automatically if quota exceeded.
+- Android photo picker: `isAndroid` uses `navigator.userAgent` — some Android tablets report a desktop UA and won't see the bottom sheet (they fall through to the gallery input, which still works). Camera shortcut is the only thing lost on those edge-case devices.
