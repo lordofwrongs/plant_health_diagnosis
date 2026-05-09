@@ -242,7 +242,7 @@ RULES:
     } else {
       await supabase
         .from('plant_conversations')
-        .insert({ log_id, user_id, messages: updatedMessages })
+        .insert({ log_id, user_id, messages: updatedMessages, updated_at: new Date().toISOString() })
     }
 
     return json({ answer, messages: updatedMessages })

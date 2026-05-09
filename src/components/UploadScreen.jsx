@@ -252,18 +252,16 @@ export default function UploadScreen({ onUploadComplete, userLanguage }) {
     const guestId = localStorage.getItem('plant_care_guest_id')
     logger.info('UploadScreen', `Submit: ${activeSlots.length} photo(s), lang=${userLanguage}`, { guest_id: guestId })
 
-    // FIX-30: Offline queue — save compressed blobs to IndexedDB, flush when back online
+    // FIX-30: Offline queue — save compressed blobs to IndexedDB, flush when back online.
+    // Skip getLocationContext entirely when offline — it blocks for up to 12s on GPS timeout.
     if (!navigator.onLine) {
       try {
-        const [context, compressedFiles] = await Promise.all([
-          getLocationContext(),
-          Promise.all(activeSlots.map(slot => compressImage(slot.file))),
-        ])
-        await idbEnqueue({ blobs: compressedFiles, context, nickname, userLanguage })
+        const compressedFiles = await Promise.all(activeSlots.map(slot => compressImage(slot.file)))
+        await idbEnqueue({ blobs: compressedFiles, context: { lat: null, lng: null, name: 'Your Location' }, nickname, userLanguage })
         setOfflineQueued(prev => prev + 1)
         setSlotImages({ whole: null, leaf: null, stem: null })
         setNickname('')
-        setError("You're offline — your scan has been saved and will upload automatically when you reconnect.")
+        // Blue badge above the CTA is the success feedback; no red error box needed
       } catch {
         setError('Could not save scan offline. Please try again.')
       } finally {
