@@ -86,9 +86,12 @@ $r | Format-Table log_id, user_id, created_at -AutoSize
 
 ### Deploy edge functions
 ```powershell
+# plant-processor + plant-chat: --no-verify-jwt (called from frontend, no Supabase JWT)
+# care-reminder: NO flag — JWT enforced at infra layer (pg_cron sends service-role JWT)
+# weekly-digest: --no-verify-jwt (public unsubscribe GET endpoint must stay accessible)
 npx supabase functions deploy plant-processor --project-ref thgdxffelonamukytosq --no-verify-jwt
 npx supabase functions deploy plant-chat --project-ref thgdxffelonamukytosq --no-verify-jwt
-npx supabase functions deploy care-reminder --project-ref thgdxffelonamukytosq --no-verify-jwt
+npx supabase functions deploy care-reminder --project-ref thgdxffelonamukytosq
 npx supabase functions deploy weekly-digest --project-ref thgdxffelonamukytosq --no-verify-jwt
 ```
 
@@ -194,7 +197,8 @@ Invoke-RestMethod -Uri "https://thgdxffelonamukytosq.supabase.co/functions/v1/we
 ### 14. "Q&A not working / not saving"
 - Check `plant_conversations` table for the scan's `log_id`
 - Check plant-chat edge function logs for Gemini errors
-- 3-turn limit per scan — Q&A section shows "Turn 3 of 3" and input is disabled after limit reached
+- 3-turn limit per scan — enforced **from DB** (not the client); Q&A section disables input after 3 user turns
+- If user sees "max_turns_reached" immediately on first question: check `plant_conversations` — there may be a stale record with 3 stored turns (e.g. from a previous correction re-run that cleared the UI but not the DB)
 - Guest users: Q&A works but no cross-session history
 
 ### 15. "Vital Signs / Toxicity / Environment card missing"
@@ -215,7 +219,23 @@ Invoke-RestMethod -Uri "https://thgdxffelonamukytosq.supabase.co/functions/v1/we
 - Check `RESEND_FROM_EMAIL` secret is set (used as Brevo sender name+email)
 - Verify Brevo sender address is verified in Brevo dashboard
 
-### 18. "Android users can't take a photo — only sees file manager"
+### 18. "User hits 'Daily scan limit reached' (429)"
+- Expected behaviour — `plant-processor` enforces a max of 10 new scans per user per day (corrections are exempt)
+- Check `plant_logs` count for that `user_id` today:
+  ```powershell
+  $r = Invoke-RestMethod -Uri "https://thgdxffelonamukytosq.supabase.co/rest/v1/plant_logs?select=id,created_at&user_id=eq.<USER_ID>&created_at=gte.<TODAY_UTC_MIDNIGHT>" -Headers $headers
+  $r.Count
+  ```
+- If legitimate abuse (bot or scraper): consider blocking the guest_id in the DB
+- Limit resets at midnight UTC
+
+### 19. "Q&A returns 401 Invalid user identity"
+- Happens when an authenticated user's JWT has expired or is missing from the `Authorization` header
+- `plant-chat` now verifies authenticated users via JWT; guests must pass a `guest_`-prefixed `user_id`
+- Common cause: user session expired between scanning and asking a question
+- Fix: user should sign out and sign back in via magic link to refresh their JWT
+
+### 20. "Android users can't take a photo — only sees file manager"
 - **Root cause**: Android Chrome/Samsung Internet triggers the OS file manager (no camera option) when a file input has only `accept="image/*"` and no `capture` attribute
 - **Fix shipped**: `UploadScreen.jsx` now detects Android via `navigator.userAgent` and shows a native-style bottom sheet ("Take Photo / Choose from Gallery") when a slot is tapped. iOS users are **unaffected** — they continue to receive the native iOS picker sheet as before
 - **Architecture**: Each slot has two hidden inputs — one with `capture="environment"` (camera, Android only) and one without (gallery / iOS path). The bottom sheet only renders when `sheetSlotKey` state is set, which only happens on Android
@@ -251,7 +271,7 @@ Invoke-RestMethod -Uri "https://thgdxffelonamukytosq.supabase.co/functions/v1/we
 ## Deploy Checklist (after any fix)
 
 - [ ] Fix committed to `main` with descriptive message
-- [ ] If edge function changed: `npx supabase functions deploy <function-name> --project-ref thgdxffelonamukytosq --no-verify-jwt`
+- [ ] If edge function changed: `npx supabase functions deploy <function-name> --project-ref thgdxffelonamukytosq --no-verify-jwt` (omit `--no-verify-jwt` for `care-reminder`)
 - [ ] If frontend changed: `git push origin main` (Vercel auto-deploys in ~1–2 min)
 - [ ] Verify live site: `curl -s https://plant-health-diagnosis.vercel.app | Select-String "title"`
 - [ ] Run a live test scan and check DB for `status=done` with correct data

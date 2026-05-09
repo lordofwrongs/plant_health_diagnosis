@@ -59,6 +59,8 @@ Vercel env vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_APP_URL=ht
 | `supabase/migrations/sprint17_weekly_digest.sql` | Adds `email_digest_opt_out` column to `user_profiles` + commented pg_cron schedule snippet |
 | `supabase/migrations/sprint12_feedback_conversations.sql` | ✅ Executed — creates `identification_feedback` + `plant_conversations` tables with RLS and indexes |
 | `supabase/migrations/sprint13_push_notifications.sql` | ✅ Executed — creates `push_subscriptions`, `push_mutes`, `plant_care_actions` tables. pg_cron job scheduled hourly. VAPID secrets set. `VITE_VAPID_PUBLIC_KEY` added to Vercel. |
+| `supabase/migrations/security_rls_plant_logs.sql` | ✅ Executed — tightens `plant_logs` RLS: authenticated users scoped to `auth.uid()`; anon delete changed from `USING (true)` to `USING (user_id IS NOT NULL)`. |
+| `supabase/migrations/sprint19_cleanup_cron.sql` | ✅ Executed — schedules `cleanup-orphan-guest-logs` pg_cron job (ID 3): deletes guest `plant_logs` rows older than 30 days at 3am UTC daily. |
 | `src/utils/pushNotifications.js` | Push subscription helpers: subscribe/unsubscribe, mute/unmute per plant, VAPID key handling |
 | `src/index.css` | Design tokens (CSS custom properties), animations |
 | `src/supabaseClient.js` | Supabase client init |
@@ -185,22 +187,25 @@ RLS: `plant_logs` — anon insert + select + delete (by user_id). `users` — an
 
 ## Security Enhancements
 
-To move from a production MVP to a hardened application, the following security improvements are recommended:
-
 | Area | Fix Required | Priority |
 |---|---|---|
-| **Credential Sanitization** | ✅ Done — personal email removed from docs; update `VAPID_SUBJECT` Supabase secret to use a generic support alias (e.g., `support@yourdomain.com`). | High |
-| **Edge Function Security** | ✅ Done — `plant-processor` now guards on `pending` status before processing; `care-reminder` deployed without `--no-verify-jwt`. `weekly-digest` retains `--no-verify-jwt` (public unsubscribe endpoint). | High |
-| **Email Privacy** | ✅ Done — unsubscribe URL in `weekly-digest` is now HMAC-SHA256 signed (`UNSUBSCRIBE_SECRET`). Signature verified before accepting opt-out. Old unsigned links return 403. | Medium |
-| **Access Control** | ✅ Done (authenticated users) — `plant_logs` RLS now uses `auth.uid()::text = user_id` for `authenticated` role. Anon/guest rows remain open; full guest isolation requires Anonymous Auth migration (future work). Migration: `security_rls_plant_logs.sql`. | Medium |
-| **Frontend Logging** | ✅ Done — `window.__plantLogger` gated to `import.meta.env.DEV` only. Not exposed in production builds. | Low |
-| **Infrastructure** | ✅ Done (deferred) — project ref is documentation-only; no runtime risk. Acceptable as-is for a single-project setup. | Low |
+| **Credential Sanitization** | ✅ Done — personal email removed from docs; `VAPID_SUBJECT` uses support alias. | High |
+| **Edge Function Security** | ✅ Done — `plant-processor` guards on `pending` status + rate-limits to 10 scans/user/day; `care-reminder` deployed without `--no-verify-jwt`; misleading Bearer check removed (auth is infra-enforced). | High |
+| **Q&A Turn Limit** | ✅ Done — `plant-chat` turn limit enforced from DB record, not client-supplied `messages` body. Bypass via `messages: []` now impossible. | Critical |
+| **Q&A Identity Spoofing** | ✅ Done — `plant-chat` verifies `user_id` against Supabase JWT for authenticated users; guests must pass `guest_`-prefixed ID from request body. | Critical |
+| **PostgREST Injection** | ✅ Done — nearby-scan query in `plant-processor` replaced with parameterized `.eq()` / `.gte()` / `.lte()` calls; no more `.or()` string interpolation. | High |
+| **Email Privacy** | ✅ Done — unsubscribe URL in `weekly-digest` is HMAC-SHA256 signed (`UNSUBSCRIBE_SECRET`). Unsigned links return 403. | Medium |
+| **Access Control** | ✅ Done — `plant_logs` RLS anon delete changed from `USING (true)` to `USING (user_id IS NOT NULL)`. Authenticated users scoped to `auth.uid()`. Full guest isolation deferred (requires Anonymous Auth). Migration: `security_rls_plant_logs.sql`. | Medium |
+| **Frontend Logging** | ✅ Done — `window.__plantLogger` gated to `import.meta.env.DEV` only. | Low |
+| **Guest Data Growth** | ✅ Done — daily pg_cron job (`cleanup-orphan-guest-logs`, job ID 3) deletes guest `plant_logs` rows older than 30 days at 3am UTC. Migration: `sprint19_cleanup_cron.sql`. | Medium |
+| **Gemini Timeout** | ✅ Done — `plant-chat` Gemini call wrapped in `fetchWithTimeout(30 000ms)`. | High |
+| **PlantNet Cache TTL** | ✅ Done — cache entries older than 60 days ignored; fresh API call made instead. | Medium |
 
 ### Implementation Notes:
-1. ✅ **Harden `plant-processor`**: Status guard added — returns 404 if record not found, 409 if not `pending`.
-2. ✅ **Secure Unsubscribe**: HMAC-SHA256 signed unsubscribe URLs via `UNSUBSCRIBE_SECRET` Supabase secret.
-3. ✅ **Cleanse Repository**: Personal email removed from CLAUDE.md.
-4. ✅ **Tighten RLS**: `plant_logs` authenticated users scoped to `auth.uid()`. Full guest isolation deferred (requires Anonymous Auth migration).
+1. ✅ **Harden `plant-processor`**: Status guard (404/409) + 10 scans/day rate limit (corrections exempt).
+2. ✅ **Secure Unsubscribe**: HMAC-SHA256 signed via `UNSUBSCRIBE_SECRET` Supabase secret.
+3. ✅ **Tighten RLS**: Authenticated scoped to `auth.uid()`; anon delete requires `user_id IS NOT NULL`.
+4. ✅ **Cleanse Repository**: Personal email removed from CLAUDE.md.
 
 ---
 
@@ -229,7 +234,8 @@ To move from a production MVP to a hardened application, the following security 
 | 16 | AI pipeline enrichments + UX polish + Voice Q&A: (1) **AI enrichments** — `toxicity`, `light_intensity_analysis`, `seasonal_context`, `vital_signs` (hydration/light/nutrients/pest_risk 0–100 scores) now wired through Gemini prompt → DB → UI. `vital_signs` stored in new `plant_logs.vital_signs jsonb` column (migration: `sprint16_enrichments.sql`). (2) **Vital Signs meters** — 4-row progress bar panel in ResultsScreen, teal/amber/red by score, pest_risk inverted. (3) **Toxicity/Safety card** — per-species cat/dog/human risk with colour-coded pills. (4) **Environment card** — light analysis + seasonal care note. (5) **Colourblind-safe palette** — `healthCategoryToColor()` changed from green/red to teal (`#0D9488`)/amber/red; `--healthy` CSS var updated. (6) **HistoryScreen skeleton** — 4-card shimmer grid replaces loading spinner. (7) **Voice Q&A** — 🎤 mic button in Q&A input row, Web Speech API (`SpeechRecognition`/`webkitSpeechRecognition`), language-aware (en-US/hi-IN/ta-IN/te-IN), pulsing teal animation while listening, gracefully hidden when unsupported. ✅ **Confirmed working in production** (Bell Pepper scan verified). DB migration executed. Edge function deployed. |
 | 18 | UX polish — final sprint: (1) **Growth narratives** — Gemini instruction 14 added to `plant-processor`: when prior scan history exists, generates a 1–2 sentence warm comparison stored in `plant_logs.growth_milestones.narrative`. Shown in Health Journey card, replaces generic "conditions remain consistent" text. (2) **ResultsScreen correction skeleton** — when re-analysis runs after user submits a correction, 4 shimmer placeholder cards replace stale content instead of showing old data with just a banner. (3) **Care reminder nudge** — "🔔 Set watering reminders in My Garden →" button appears at the bottom of the Care Schedule card, calls `onBack()` to navigate to PlantDetailScreen. ✅ Edge function deployed. Frontend auto-deployed via Vercel push. |
 | 17 | Weekly email digest: `weekly-digest` Supabase edge function sends a branded HTML email to all registered users every Sunday 8am UTC via **Brevo** API. Content: each user's plants with latest health status, watering countdown, pest alerts. Opt-out only — one-click unsubscribe link in email sets `users.email_digest_opt_out = true`. Scans matched via `users.guest_id` (how `plant_logs.user_id` is stored). **Secrets**: `BREVO_API_KEY`, `RESEND_FROM_EMAIL` (sender address verified in Brevo), `APP_URL`. **DB migrations**: `sprint17_weekly_digest.sql` + `ALTER TABLE users ADD COLUMN email_digest_opt_out boolean DEFAULT false` (run manually). **pg_cron**: `weekly-plant-digest` scheduled `0 8 * * 0`. ✅ **Confirmed working in production** — 2 emails delivered, cron active. |
-| Bug | Android camera fix: Android browsers opened file manager only (no camera option) because file inputs had no `capture` attribute. Fixed in `UploadScreen.jsx`: `isAndroid` UA detection at module level; slot tap on Android shows a native-style bottom sheet ("📷 Take Photo / 🖼️ Choose from Gallery / Cancel"); each slot has two hidden inputs — `capture="environment"` for camera, no capture for gallery. iOS users unchanged — native iOS picker sheet unchanged. Scroll-lock `useEffect` prevents background scroll while sheet is open. |
+| Bug | Android camera fix: Android browsers opened file manager only (no camera option) because file inputs had no `capture` attribute. Fixed in `UploadScreen.jsx`: `isAndroid` UA detection via `useMemo` inside component; slot tap on Android shows a native-style bottom sheet ("📷 Take Photo / 🖼️ Choose from Gallery / Cancel"); each slot has two hidden inputs — `capture="environment"` for camera, no capture for gallery. iOS users unchanged — native iOS picker sheet unchanged. Scroll-lock `useEffect` prevents background scroll while sheet is open. |
+| 19 | **Security hardening + stability** (from comprehensive review): Q&A turn limit moved to DB-side enforcement (FIX-02); `plant-chat` user identity verified via JWT (FIX-03); PostgREST injection in nearby-scan query fixed (FIX-04); Gemini timeout added to `plant-chat` (FIX-05); polling changed to `status`-only then full fetch on done (FIX-06); rate limit 10 scans/user/day in `plant-processor` (FIX-07); `care-reminder` paginated to batches of 100 (FIX-08); language dropdown click-outside handler (FIX-09); Q&A cleared on correction re-run (FIX-10); correction poll race condition fixed (FIX-11); guest ID uses `crypto.randomUUID()` (FIX-12); Q&A question length capped at 500 chars (FIX-13); `isAndroid` moved into component (FIX-14); PlantNet cache TTL 60 days (FIX-15); misleading Bearer check removed from `care-reminder` (FIX-16); daily guest log cleanup cron at 3am UTC — job ID 3 (FIX-17); anon delete RLS tightened (FIX-27). **Migrations run**: `security_rls_plant_logs.sql`, `sprint19_cleanup_cron.sql`. ✅ All edge functions redeployed. ✅ Frontend deployed via Vercel push. |
 
 ---
 
@@ -237,16 +243,12 @@ To move from a production MVP to a hardened application, the following security 
 
 | Enhancement | Solution | UX Impact |
 |---|---|---|
-| **Deep Botanical Diagnostics** | Update `plant-processor` Gemini prompt to analyze "pot-to-foliage ratio" (root-bound detection) and "interveinal chlorosis patterns" (magnesium vs iron deficiency). | High: Expert-level accuracy. |
+| **Deep Botanical Diagnostics** | ✅ Done (Sprint 19) — `plant-processor` instruction 15 analyzes pot-to-foliage ratio and interveinal chlorosis patterns. | High: Expert-level accuracy. |
+| **Security Status Guarding** | ✅ Done (Sprint 19) — replay/double-processing guarded with 404/409; rate-limited to 10 scans/user/day. | Medium: Cost/Security safety. |
 | **UX De-congestion (Insights Tab)** | Consolidate `Vital Signs`, `Toxicity`, and `Environment` cards into a single "Health Insights" tabbed component in `ResultsScreen`. | High: Reduces scroll height by 40%. |
 | **Offline Scan Queue** | Implement `Background Sync` API in `sw.js` and a "Pending Upload" persistent queue in `IndexedDB`. | High: Works in gardens/greenhouses. |
-| **Security Status Guarding** | Prevent re-processing of `done` or `error` records in `plant-processor` to save costs and prevent replay attacks. | Medium: Cost/Security safety. |
-| **Personal Data Masking** | Sanitize the frontend `logger.js` to ensure User IDs and Emails never leak into console/session logs. | Medium: Privacy compliance. |
-
-### Solution Implementation Guide
-1. **Botanical Logic**: In `plant-processor/index.ts`, add Instruction 15: "Analyze the container size relative to the plant habit; if the plant looks top-heavy or pot-bound, include 'Repotting' in care steps."
-2. **Real Estate Optimization**: Modify `ResultsScreen.jsx` to use a segmented control (Tabs) for "Care Plan", "Health Insights", and "Plant Info" to keep primary actions above the fold.
-3. **Hardening**: Add `if (guard.status !== 'pending')` check to edge functions.
+| **Plant Classification (Edibility)** | Add `plant_classification` field to Gemini schema: `primary_use`, `is_edible`, `edible_parts`, `is_weed`, `weed_action`. Show as a card in ResultsScreen. DB migration needed. | High: Home gardeners need to know "can I eat this?" |
+| **Personal Data Masking** | Sanitize `logger.js` to ensure User IDs and Emails never leak into console/session logs. | Medium: Privacy compliance. |
 
 ---
 
@@ -315,4 +317,4 @@ curl -s https://plant-health-diagnosis.vercel.app | grep title
 - `AccuracyScore = 0` on old records = pre-cross-validation pipeline. Display-only issue, no fix needed.
 - HEIC files are rejected client-side in UploadScreen — by design. Users must export as JPEG.
 - PlantNet free tier resets at midnight UTC. Gemini-only fallback fires automatically if quota exceeded.
-- Android photo picker: `isAndroid` uses `navigator.userAgent` — some Android tablets report a desktop UA and won't see the bottom sheet (they fall through to the gallery input, which still works). Camera shortcut is the only thing lost on those edge-case devices.
+- Android photo picker: `isAndroid` uses `navigator.userAgent` via `useMemo` inside `UploadScreen` — some Android tablets report a desktop UA and won't see the bottom sheet (they fall through to the gallery input, which still works). Camera shortcut is the only thing lost on those edge-case devices.
