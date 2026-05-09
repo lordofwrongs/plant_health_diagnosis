@@ -153,13 +153,79 @@ Deno.serve(async () => {
     if (batch.length < BATCH_SIZE) break
   }
 
-  // ── 8. Remove expired subscriptions ────────────────────────────────────────
+  // ── 8. Process pest follow-up reminders ────────────────────────────────────
+  // Reads follow_up_reminders rows inserted by plant-processor when pest_detected=true.
+  // Sends once regardless of delivery window (7-day reminders are not daily nudges).
+  let followUpSent = 0
+  const { data: dueReminders } = await supabase
+    .from('follow_up_reminders')
+    .select('id, user_id, message')
+    .lte('remind_at', new Date().toISOString())
+    .eq('processed', false)
+    .limit(200)
+
+  if (dueReminders?.length) {
+    const reminderUserIds = [...new Set(dueReminders.map((r: { user_id: string }) => r.user_id))]
+
+    const { data: reminderSubs } = await supabase
+      .from('push_subscriptions')
+      .select('user_id, endpoint, p256dh, auth_key')
+      .in('user_id', reminderUserIds)
+
+    const reminderSubsByUser: Record<string, { endpoint: string; p256dh: string; auth_key: string }[]> = {}
+    for (const sub of (reminderSubs ?? [])) {
+      if (!reminderSubsByUser[sub.user_id]) reminderSubsByUser[sub.user_id] = []
+      reminderSubsByUser[sub.user_id].push(sub)
+    }
+
+    const processedIds: string[] = []
+
+    await Promise.all(
+      dueReminders.map(async (reminder: { id: string; user_id: string; message: string }) => {
+        const subs = reminderSubsByUser[reminder.user_id]
+        if (subs?.length) {
+          const payload = JSON.stringify({
+            title: '🔍 Pest follow-up',
+            body: reminder.message,
+            icon: '/icons/icon-192.png',
+            url: '/',
+            tag: `pest-followup-${reminder.id}`,
+          })
+          await Promise.all(
+            subs.map((sub) =>
+              webpush
+                .sendNotification(
+                  { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth_key } },
+                  payload
+                )
+                .then(() => { sentCount++; followUpSent++ })
+                .catch((err: { statusCode?: number }) => {
+                  if (err.statusCode === 410) staleEndpoints.push(sub.endpoint)
+                })
+            )
+          )
+        }
+        // Mark processed whether or not the user has a push subscription —
+        // avoids re-querying indefinitely for users who never opted in.
+        processedIds.push(reminder.id)
+      })
+    )
+
+    if (processedIds.length) {
+      await supabase
+        .from('follow_up_reminders')
+        .update({ processed: true })
+        .in('id', processedIds)
+    }
+  }
+
+  // ── 9. Remove expired subscriptions ────────────────────────────────────────
   if (staleEndpoints.length) {
     await supabase.from('push_subscriptions').delete().in('endpoint', staleEndpoints)
   }
 
   return new Response(
-    JSON.stringify({ ok: true, sent: sentCount, cleaned: staleEndpoints.length }),
+    JSON.stringify({ ok: true, sent: sentCount, followUpSent, cleaned: staleEndpoints.length }),
     { headers: { 'Content-Type': 'application/json' } }
   )
 })

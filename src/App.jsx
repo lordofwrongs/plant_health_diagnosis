@@ -366,7 +366,7 @@ export default function App() {
 
 const styles = {
   appContainer: {
-    minHeight: '100vh',
+    minHeight: '100svh',
     display: 'flex',
     flexDirection: 'column',
     background: 'var(--bg)',

@@ -965,7 +965,7 @@ const sheetStyles = {
     right: 0,
     background: 'var(--card)',
     borderRadius: '20px 20px 0 0',
-    padding: '12px 20px 40px',
+    padding: '12px 20px max(40px, calc(env(safe-area-inset-bottom) + 20px))',
     zIndex: 101,
     display: 'flex',
     flexDirection: 'column',
