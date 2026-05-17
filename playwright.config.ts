@@ -19,7 +19,13 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        // Grant geolocation permission so getCurrentPosition resolves instantly
+        // instead of waiting 12s to timeout and fall back to ipapi.co
+        permissions: ['geolocation'],
+        geolocation: { latitude: 12.9716, longitude: 77.5946 },
+      },
     },
   ],
   webServer: {

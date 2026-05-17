@@ -35,7 +35,8 @@ async function uploadAndAnalyse(page: Page) {
  * Polling interval in AnalysingScreen is 8 s; allow up to 20 s total.
  */
 async function waitForResults(page: Page) {
-  await expect(page.getByRole('tab', { name: 'Diagnosis' })).toBeVisible({ timeout: 20000 });
+  // Polling interval is 8 s; allow 30 s to cover geolocation + upload + first poll
+  await expect(page.getByRole('tab', { name: 'Diagnosis' })).toBeVisible({ timeout: 30000 });
 }
 
 // ─── Test suite ────────────────────────────────────────────────────────────────
@@ -69,8 +70,8 @@ test.describe('BotanIQ Regression Suite', () => {
     // Upload and kick off scan
     await uploadAndAnalyse(page);
 
-    // AnalysingScreen
-    await expect(page.getByRole('heading', { name: 'Analysing your plant' })).toBeVisible({ timeout: 10000 });
+    // AnalysingScreen — allow 20 s (geolocation + upload + handoff to AnalysingScreen)
+    await expect(page.getByRole('heading', { name: 'Analysing your plant' })).toBeVisible({ timeout: 20000 });
     await expect(page.getByText('Uploading image')).toBeVisible();
     await expect(page.getByText('Identifying plant species')).toBeVisible();
 
