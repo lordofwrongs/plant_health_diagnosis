@@ -199,7 +199,7 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
         try {
           const { data } = await supabase
             .from('plant_logs')
-            .select('status, PlantName, ScientificName, AccuracyScore, HealthStatus, HealthColor, VisualAnalysis, CarePlan, ExpertTip, WeatherAlert, care_schedule, pest_detected, pest_name, pest_treatment, plantnet_candidates, vernacular_metadata, image_url, error_details, toxicity, light_intensity_analysis, seasonal_context, vital_signs, growth_milestones, plant_classification, nutrient_recommendations, harvest_guide, plantnet_reference_image')
+            .select('status, PlantName, ScientificName, AccuracyScore, HealthStatus, HealthColor, VisualAnalysis, CarePlan, ExpertTip, WeatherAlert, care_schedule, pest_detected, pest_name, pest_treatment, plantnet_candidates, vernacular_metadata, image_url, error_details, toxicity, light_intensity_analysis, seasonal_context, vital_signs, growth_milestones, plant_classification, nutrient_recommendations, harvest_guide, plantnet_reference_image, plant_overview')
             .eq('id', localResult.id)
             .single()
           if (data?.status === 'done') {
