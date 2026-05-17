@@ -130,8 +130,11 @@ test.describe('BotanIQ Regression Suite', () => {
     await page.getByRole('tab', { name: 'About' }).click();
     await expect(page.getByRole('tab', { name: 'About' })).toHaveAttribute('aria-selected', 'true');
 
+    // Plant overview card
+    await expect(page.getByRole('heading', { name: 'About This Plant' })).toBeVisible();
+    await expect(page.getByText(/fruiting vegetable/i)).toBeVisible();
     // ClassificationCard
-    await expect(page.getByText('vegetable', { exact: false })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Plant Classification' })).toBeVisible();
     // Toxicity card — heading is <h3>Safety</h3>
     await expect(page.getByRole('heading', { name: 'Safety' })).toBeVisible();
   });

@@ -721,7 +721,8 @@ serve(async (req: Request) => {
             post_harvest_tip:       { type: "string", nullable: true },
             important_warning:      { type: "string", nullable: true }
           }
-        }
+        },
+        plant_overview: { type: "string", nullable: true }
       },
       required: [
         "is_analyzable", "independent_id", "final_scientific_name",
@@ -811,6 +812,7 @@ STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
   - For herbs: include how to harvest to encourage regrowth in ${userLang}.
   - If plant is NOT edible: set harvest_guide to null.
 18. PLANT CLASSIFICATION: Determine the plant's primary use and edibility.
+19. PLANT OVERVIEW: Write 1–2 natural, welcoming sentences describing what this plant is, its category (e.g., fruiting vegetable, flowering shrub, culinary herb), and its most common everyday use. Write in ${userLang}. This is the first thing a curious gardener reads — keep it warm and informative.
   - primary_use: one of vegetable / fruit / herb_culinary / herb_medicinal / ornamental / weed / tree / succulent / invasive / unknown
   - is_edible: true if any part is edible by humans under normal preparation
   - edible_parts: which parts and how (e.g. "young leaves — blanch before eating")
@@ -910,6 +912,7 @@ STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
         plant_classification:     result.plant_classification ?? null,
         nutrient_recommendations: result.nutrient_recommendations ?? null,
         harvest_guide:            result.harvest_guide ?? null,
+        plant_overview:           typeof result.plant_overview === 'string' ? result.plant_overview : null,
         plantnet_reference_image: plantNet?.referenceImageUrl ?? existingRefImage,
         status:                   'done',
         // Store photo_tip as gentle guidance in ResultsScreen when image quality was imperfect

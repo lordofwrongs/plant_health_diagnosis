@@ -669,6 +669,14 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
         {/* ── About Tab ─────────────────────────────────────────────────────── */}
         {activeTab === 'about' && (<>
 
+          {/* Plant Overview */}
+          {localResult?.plant_overview && (
+            <div className="fade-up verdant-card" style={styles.section}>
+              <h3 style={styles.sectionTitle}>About This Plant</h3>
+              <p style={{ ...styles.bodyText, lineHeight: '1.7' }}>{localResult.plant_overview}</p>
+            </div>
+          )}
+
           {/* Plant Classification */}
           {localResult?.plant_classification && (
             <ClassificationCard classification={localResult.plant_classification} />

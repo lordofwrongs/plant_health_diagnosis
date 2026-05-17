@@ -57,6 +57,7 @@ export const MOCK_TOMATO_RESULT = {
     post_harvest_tip: 'Store at room temperature; refrigeration reduces flavour.',
     important_warning: 'Unripe green tomatoes contain higher solanine levels.',
   },
+  plant_overview: 'Tomato (Solanum lycopersicum) is a fruiting vegetable widely cultivated for its edible red berries. A kitchen staple around the world, it is used fresh in salads, cooked into sauces, and preserved as paste or juice.',
   plantnet_reference_image: 'https://bs.plantnet.org/image/o/test-reference-leaf.jpg',
   growth_milestones: {
     narrative: 'Your tomato has grown significantly since the last scan and is now starting to develop fruit.',
