@@ -3,6 +3,7 @@ import {
   setupMockRoutes,
   setupQualityIssueRoutes,
   suppressFirstVisitOverlays,
+  mockPushNotifications,
 } from '../mocks/route-handlers';
 import { TINY_PNG_BASE64, MOCK_TOMATO_RESULT } from '../mocks/plant-mocks';
 
@@ -100,6 +101,7 @@ test.describe('BotanIQ Regression Suite', () => {
   test('Care tab shows nutrient and harvest cards', async ({ page }) => {
     await suppressFirstVisitOverlays(page);
     await setupMockRoutes(page);
+    await mockPushNotifications(page);
     await page.goto('/');
 
     await uploadAndAnalyse(page);
@@ -116,6 +118,9 @@ test.describe('BotanIQ Regression Suite', () => {
     // HarvestGuideCard — visible because plant_classification.is_edible=true
     await expect(page.getByText('Harvest Guide')).toBeVisible();
     await expect(page.getByText('Time to harvest')).toBeVisible();
+
+    // Reminder nudge is visible when push is supported and not yet subscribed
+    await expect(page.getByRole('button', { name: /Enable watering reminders/i })).toBeVisible();
   });
 
   // ── 4. About tab content ─────────────────────────────────────────────────────
@@ -255,6 +260,44 @@ test.describe('BotanIQ Regression Suite', () => {
     // Two photos
     await page.locator('input[type="file"]').nth(3).setInputFiles(tinyImageFile('leaf.png'));
     await expect(page.getByRole('button', { name: 'Analyse 2 Photos' })).toBeVisible({ timeout: 3000 });
+  });
+
+  // ── 13. Reminder subscribe flow ──────────────────────────────────────────────
+  test('Enable watering reminders button subscribes and shows confirmation', async ({ page }) => {
+    await suppressFirstVisitOverlays(page);
+    await setupMockRoutes(page);
+    await mockPushNotifications(page);  // not yet subscribed
+    await page.goto('/');
+
+    await uploadAndAnalyse(page);
+    await waitForResults(page);
+
+    await page.getByRole('tab', { name: 'Care' }).click();
+
+    // Button visible before subscribing
+    const btn = page.getByRole('button', { name: /Enable watering reminders/i });
+    await expect(btn).toBeVisible();
+    await btn.click();
+
+    // After subscribing, confirmation message replaces the button
+    await expect(page.getByText(/8am when watering is due/i)).toBeVisible({ timeout: 5000 });
+    await expect(btn).not.toBeVisible();
+  });
+
+  // ── 14. Reminder already on — shows status instead of button ────────────────
+  test('Already-subscribed state shows reminders-on status, not button', async ({ page }) => {
+    await suppressFirstVisitOverlays(page);
+    await setupMockRoutes(page);
+    await mockPushNotifications(page, { alreadySubscribed: true });
+    await page.goto('/');
+
+    await uploadAndAnalyse(page);
+    await waitForResults(page);
+
+    await page.getByRole('tab', { name: 'Care' }).click();
+
+    await expect(page.getByText(/Watering reminders on/i)).toBeVisible();
+    await expect(page.getByRole('button', { name: /Enable watering reminders/i })).not.toBeVisible();
   });
 
 });

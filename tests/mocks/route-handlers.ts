@@ -103,6 +103,61 @@ export async function setupQualityIssueRoutes(page: Page) {
 }
 
 /**
+ * Stubs the browser Push Notification APIs so tests can exercise the
+ * reminder subscribe flow without real service workers or permission prompts.
+ *
+ * By default simulates a NOT-yet-subscribed state (getSubscription → null).
+ * Pass { alreadySubscribed: true } to simulate an active subscription.
+ */
+export async function mockPushNotifications(page: Page, { alreadySubscribed = false } = {}) {
+  // Route push_subscriptions upsert so subscribeToPush doesn't hit a real DB
+  await page.route(`${SUPABASE_URL}/rest/v1/push_subscriptions**`, (route) =>
+    route.fulfill({ status: 200, json: {} })
+  );
+
+  // Stub browser Push APIs via an init script that runs before any module code
+  await page.addInitScript((subscribed) => {
+    const fakeSubscription = subscribed ? {
+      toJSON: () => ({
+        endpoint: 'https://fcm.example.com/test-endpoint',
+        keys: { p256dh: 'test-p256dh', auth: 'test-auth' },
+      }),
+      unsubscribe: () => Promise.resolve(true),
+    } : null;
+
+    const fakePushManager = {
+      getSubscription: () => Promise.resolve(fakeSubscription),
+      subscribe: () => Promise.resolve({
+        toJSON: () => ({
+          endpoint: 'https://fcm.example.com/test-endpoint',
+          keys: { p256dh: 'test-p256dh', auth: 'test-auth' },
+        }),
+      }),
+    };
+
+    // Stub Notification
+    Object.defineProperty(window, 'Notification', {
+      value: Object.assign(function Notification() {}, {
+        permission: 'granted',
+        requestPermission: () => Promise.resolve('granted'),
+      }),
+      configurable: true,
+    });
+
+    // Stub serviceWorker.ready
+    const fakeReg = { pushManager: fakePushManager };
+    Object.defineProperty(navigator, 'serviceWorker', {
+      value: {
+        ready: Promise.resolve(fakeReg),
+        register: () => Promise.resolve(fakeReg),
+        getRegistration: () => Promise.resolve(fakeReg),
+      },
+      configurable: true,
+    });
+  }, alreadySubscribed);
+}
+
+/**
  * Injects localStorage keys that suppress first-visit UI overlays so
  * tests can focus on the feature under test rather than dismissing modals.
  */

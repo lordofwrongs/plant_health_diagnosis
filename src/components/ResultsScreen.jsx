@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient.js';
 import { track } from '../utils/analytics.js';
+import { isPushSupported, getCurrentSubscription, subscribeToPush } from '../utils/pushNotifications.js';
 
 const CONF_TIER = (score) => {
   if (!score) return 'unknown'
@@ -53,6 +54,11 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
   // Active results tab
   const [activeTab, setActiveTab] = useState('diagnosis')
 
+  // Reminder subscription state (Care tab nudge)
+  const [reminderEnabled, setReminderEnabled] = useState(false)
+  const [reminderSubscribing, setReminderSubscribing] = useState(false)
+  const [reminderConfirmed, setReminderConfirmed] = useState(false)
+
   // Sync localResult when parent passes a new scan (timeline navigation)
   useEffect(() => {
     setLocalResult(result)
@@ -68,6 +74,12 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
   // Cleanup polling on unmount
   useEffect(() => {
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
+  }, [])
+
+  // Check if push notifications are already subscribed
+  useEffect(() => {
+    if (!isPushSupported()) return
+    getCurrentSubscription().then(sub => setReminderEnabled(!!sub))
   }, [])
 
   useEffect(() => {
@@ -605,9 +617,38 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
                   {localResult.care_schedule.notes}
                 </p>
               )}
-              <button style={styles.reminderNudge} onClick={onBack}>
-                🔔 Set watering reminders in My Garden →
-              </button>
+              {isPushSupported() && (
+                reminderEnabled ? (
+                  <div style={styles.reminderConfirmed} role="status">
+                    🔔 Watering reminders on — you'll be notified at 8am when watering is due
+                  </div>
+                ) : reminderConfirmed ? (
+                  <div style={styles.reminderConfirmed} role="status">
+                    ✅ Done! You'll get a reminder at 8am when watering is due
+                  </div>
+                ) : (
+                  <button
+                    style={{ ...styles.reminderNudge, opacity: reminderSubscribing ? 0.6 : 1 }}
+                    disabled={reminderSubscribing}
+                    onClick={async () => {
+                      setReminderSubscribing(true)
+                      try {
+                        await subscribeToPush(localResult.user_id)
+                        setReminderEnabled(true)
+                        setReminderConfirmed(true)
+                        track('notification_opted_in', { source: 'results_care_tab' })
+                      } catch {
+                        // Permission denied or unsupported — fall back to My Garden
+                        onBack()
+                      } finally {
+                        setReminderSubscribing(false)
+                      }
+                    }}
+                  >
+                    {reminderSubscribing ? 'Setting up…' : '🔔 Enable watering reminders'}
+                  </button>
+                )
+              )}
             </div>
           )}
 
@@ -1568,14 +1609,25 @@ const styles = {
     marginTop: '16px',
     padding: '11px 0',
     background: 'none',
-    border: '1px solid var(--border)',
+    border: '1px solid var(--leaf)',
     borderRadius: 'var(--r-full)',
-    color: 'var(--mid)',
+    color: 'var(--leaf)',
     fontSize: '13px',
     fontWeight: '600',
     cursor: 'pointer',
     textAlign: 'center',
     letterSpacing: '0.1px',
+  },
+  reminderConfirmed: {
+    marginTop: '16px',
+    padding: '11px 14px',
+    background: '#F0FDF4',
+    border: '1px solid #BBF7D0',
+    borderRadius: 'var(--r-full)',
+    color: '#166534',
+    fontSize: '13px',
+    fontWeight: '600',
+    textAlign: 'center',
   },
 
   scheduleGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' },
