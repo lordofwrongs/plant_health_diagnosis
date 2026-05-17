@@ -280,6 +280,56 @@ RLS: `plant_logs` — anon insert + select + delete (by user_id). `users` — an
 
 ---
 
+## Regression Test Suite
+
+Playwright e2e tests covering all critical user flows. All external APIs (Supabase, ipapi.co) are mocked — no real data touched.
+
+**Prerequisites:** `.env.local` must exist with `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (see `credentials.env.txt`). Run once: copy values from credentials file.
+
+```powershell
+# Run full suite (~1.6 min, headless)
+npm test
+
+# Run only the upload-screen smoke test (~6 s — fast CI check)
+npm run test:smoke
+
+# Watch the browser execute tests (debug mode)
+npm run test:headed
+
+# Open HTML report after a failure
+npm run test:report
+```
+
+**Test file locations:**
+
+| File | Purpose |
+|---|---|
+| `tests/e2e/botaniq-ux-flow.spec.ts` | 12 regression tests covering all screens and flows |
+| `tests/mocks/plant-mocks.ts` | Mock `plant_logs` row matching actual DB schema |
+| `tests/mocks/route-handlers.ts` | Reusable Supabase + ipapi.co route interceptors |
+| `playwright.config.ts` | Playwright config — Chromium, auto-start dev server |
+
+**Tests covered:**
+
+1. Upload screen loads with correct elements
+2. Full scan: upload → analysing → results (3-tab layout)
+3. Care tab: NutrientCard + HarvestGuideCard
+4. About tab: ClassificationCard + Safety/Toxicity
+5. Quality gate: "Better Photo Needed" flow
+6. Retake Photo resets to upload screen
+7. Garden tab shows plant card
+8. + New Scan returns to upload screen
+9. Feedback widget visible on results
+10. Q&A collapsible section expands and shows input
+11. Support modal opens and closes
+12. Analyse button label reflects photo count
+
+**Auto-regression hook:** `.claude/settings.json` registers a Stop hook that runs `npm test` in the background after every Claude session. Failures wake Claude to report. Requires `/hooks` reload or session restart to activate.
+
+**When to update tests:** Any change to component text, ARIA labels, tab structure, or new screens requires updating `tests/e2e/botaniq-ux-flow.spec.ts`. Any change to `plant_logs` schema fields used by the UI requires updating `tests/mocks/plant-mocks.ts`.
+
+---
+
 ## Common Commands
 
 ```powershell
