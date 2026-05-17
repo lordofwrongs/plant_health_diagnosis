@@ -84,7 +84,7 @@
 Sticky top nav (62px height, white, `--shadow-xs`) with three zones:
 1. **Left** — BotanIQ logo mark + wordmark (taps to reset to Scan screen)
 2. **Centre** — Tab group: **Scan** (upload/analysing) | **Garden** (history/results)
-3. **Right** — Language selector pill (EN dropdown)
+3. **Right** — Language selector pill (EN dropdown) + `?` support button
 
 Active tab: `--mist` background, `--primary` text, 4px leaf-green dot indicator below label.
 
@@ -102,32 +102,47 @@ Active tab: `--mist` background, `--primary` text, 4px leaf-green dot indicator 
 - **Nickname field**: optional, groups repeat scans of the same plant
 - **CTA button**: full-width pill, `--primary` fill; disabled until at least one photo added
 - **Trust bar**: three pill badges (PlantNet · Gemini · Location)
+- **Offline queue banner**: blue banner when scans are queued in IndexedDB (shown when `navigator.onLine = false` during submit)
+- **Android bottom sheet**: tap a slot on Android → native-style sheet ("📷 Take Photo / 🖼️ Choose from Gallery / Cancel"); separate hidden inputs for camera vs gallery
 
 ### Analysing Screen
 - **Centred focus layout**: leaf animation with two ripple rings
 - **Step tracker**: 4 steps with animated dot progression
-- **Realtime + polling**: Supabase Realtime WebSocket; HTTP polling fallback every 8s; 90s hard timeout
+- **Realtime + polling**: Supabase Realtime WebSocket; HTTP polling fallback every 8s (polls `status` + `error_details` only; fetches full record on `done`); 90s hard timeout
 - **Quality gate** (when image rejected): amber tip box + "Retake Photo" CTA
 - **Error state**: ⚠️ icon + message + reference ID + "Try Again" CTA
 
-### Results Screen
-- **Back / New Scan** nav row at top
-- **Correction re-run state**: when re-analysis is running, all result content is hidden and replaced with 4 skeleton shimmer cards (`skeleton-shimmer` CSS class) + spinning re-analysis banner
-- **Weather alert** (amber card, shown only when present)
-- **Hero card**: full-width image (300px) + health status pill overlaid at bottom-left (teal/amber/red)
-- **Plant identity**: name (localised if non-English), scientific name italic, vernacular badges, confidence tag
-- **Health Journey** (shown only when ≥2 scans exist for this plant): previous date + status + trend note; trend note is Gemini-generated growth narrative from `growth_milestones.narrative`, or a fallback comparison sentence
-- **Visual Analysis**: AI narrative paragraph
-- **Vital Signs panel**: 4-row progress bar panel — Hydration / Light / Nutrients / Pest Risk (0–100 scores from `vital_signs` jsonb); bar colour teal/amber/red by score; pest_risk bar is inverted (high score = high risk = red)
-- **Toxicity / Safety card**: per-species cat / dog / human risk with colour-coded pills (Safe / Caution / Toxic)
-- **Environment card**: light intensity analysis (from photo) + seasonal care advice for current month
-- **Care Recommendations**: numbered step list with `--primary` circle indicators
-- **Care Schedule**: watering / fertilising / pest-check intervals from `care_schedule` jsonb; "Set watering reminders in My Garden →" pill button below schedule notes (navigates to PlantDetailScreen)
-- **Scan History Timeline** (shown when ≥2 scans exist): full chronological list of all scans as tappable rows; currently viewed scan marked "Viewing"; tap another row to switch result in place
-- **Expert Tip**: dark forest green box with PRO TIP badge
-- **Photo Tip**: brown box (shown only when AI returned a `photo_tip`)
-- **Q&A section**: collapsible; mic button for voice input (Web Speech API, pulsing teal when listening); 3 turns per scan; conversation stored in `plant_conversations`; guest sign-up nudge after turn 3
-- **Feedback widget**: "Was this accurate?" with thumbs-up / thumbs-down; thumbs-down opens correction modal (user types correct name → correction re-run)
+### Results Screen (3-Tab Layout — Sprint 23)
+
+The Results Screen uses a **3-tab layout** (Diagnosis / Care / About) replacing the previous 14-card linear scroll. Structure from top to bottom:
+
+1. **Back / New Scan** nav row
+2. **Correction re-run state**: when re-analysis is running, all tab content hidden; 4 skeleton shimmer cards shown with spinning banner
+3. **Hero card** (always visible, above tabs): full-width image (300px) + health status pill overlaid at bottom-left (teal/amber/red) + plant name + scientific name italic + vernacular badges + confidence tag + Health Journey sentence (if ≥2 scans)
+4. **ReferenceImagePanel** (between hero and tabs, shown only when `plantnet_reference_image` is set AND `AccuracyScore < 90`): PlantNet's reference leaf image on the left + "REFERENCE LEAF" label + scientific name + "Does your plant's leaf shape match this?" prompt + "Wrong plant" CTA
+5. **Tab bar**: Diagnosis | Care | About — pill-style selector, active tab gets `--mist` background and `--primary` text
+
+**Diagnosis tab:**
+- Weather alert (amber card, shown only when present)
+- Visual Analysis narrative paragraph
+- Vital Signs panel: 4-row progress bars — Hydration / Light / Nutrients / Pest Risk (0–100 from `vital_signs` jsonb); teal/amber/red by score; Pest Risk bar is inverted (high = red)
+- Health Journey (shown only when ≥2 scans): previous date + status + Gemini-generated growth narrative from `growth_milestones.narrative`
+- Pest card (shown only when `pest_detected = true`): pest name + treatment steps
+
+**Care tab:**
+- Care Schedule: watering / fertilising / pest-check intervals from `care_schedule` jsonb
+- NutrientCard (shown when `nutrient_recommendations` is not null): deficiency alert (amber pill) + deficiency signs + primary fix (product name, recipe, application method) + organic alternative + DIY recipe + stage note (teal) + caution (red)
+- HarvestGuideCard (shown when `harvest_guide` is not null AND `plant_classification.is_edible = true`): days-to-first-harvest + current stage estimate + visual readiness cues (✓ list) + check frequency + how-to-harvest + post-harvest tip + important warning (red)
+- "Set watering reminders in My Garden →" nudge button (navigates to PlantDetailScreen)
+
+**About tab:**
+- ClassificationCard: `primary_use` badge (teal=vegetable/fruit/herb, amber=weed/invasive, purple=medicinal, blue=ornamental) + edible parts + edibility notes + weed-removal action box (amber, when `is_weed = true`)
+- Toxicity/Safety card: per-species cat/dog/human risk with colour-coded pills (Safe / Caution / Toxic)
+- Environment card: light intensity analysis (from photo) + seasonal care advice for current month
+
+**Always below tabs (regardless of active tab):**
+- Feedback widget: "Was this accurate?" with thumbs-up / thumbs-down; thumbs-down opens correction modal (user types correct name → correction re-run skips PlantNet, injects user correction as Gemini candidate)
+- Q&A section: collapsible; mic button for voice input (Web Speech API, pulsing teal when listening); 3 turns per scan (DB-enforced); conversation stored in `plant_conversations`; guest sign-up nudge after turn 3; Q&A cleared when correction re-run starts
 
 ### Registration Modal
 - Full-screen overlay (blurred dark backdrop) after first scan result, if user not yet registered
@@ -136,6 +151,13 @@ Active tab: `--mist` background, `--primary` text, 4px leaf-green dot indicator 
 - Magic-link OTP flow: submitting sends a Supabase magic link to the email
 - **Skip link**: "Skip for now" — stores `"skipped"` in localStorage
 - Animation: card fades up on entry (`fadeUp` keyframe, 0.3s)
+
+### Support Modal
+- Opens via `?` button in nav (right of language selector)
+- **Fields**: Name (optional), Email (required), Message (required, 1000 char limit)
+- POSTs to `support-request` Supabase edge function → Brevo email to botaniqsupport@gmail.com with Reply-To set to user's email
+- Confirmation screen shows submitted details + "Email myself a copy" button (opens pre-filled mailto)
+- Error boundary fallback retains mailto link for crash scenarios
 
 ### Garden (History) Screen
 - **Header**: "My Garden" (Playfair serif) + species count
@@ -179,10 +201,11 @@ User uploads 1–3 images (whole plant / leaf / stem)
   → is_analyzable: true  → continue (photo_tip stored for soft guidance)
        ↓
   PlantNet API (botanical specialist, parallel on primary image)
-  SHA-256 cache check → skip API if cached result exists
+  SHA-256 cache check → skip API if cached result < 60 days old
+  include-related-images=true → reference leaf image URL extracted
        ↓
   Gemini pipeline (with all images as inlineData parts):
-    Step 1 — independent ID (no PlantNet hint yet)
+    Step 1 — independent ID (no PlantNet hint yet — anti-anchoring)
     Step 2 — show PlantNet candidates (or user correction if re-run)
     Step 3 — reconcile → final ID + health + care + enrichments
   ↓
@@ -196,9 +219,18 @@ User uploads 1–3 images (whole plant / leaf / stem)
   • Correction re-run, Gemini agrees   → 83%
   • Correction re-run, Gemini overrides→ 60%
        ↓
-  Growth narrative added if prior scans exist for same plant
+  Gemini structured output (PLANT_ANALYSIS_SCHEMA):
+  • Core: PlantName, ScientificName, HealthStatus, CareInstructions, care_schedule
+  • Enrichments: toxicity, vital_signs, light_intensity_analysis, seasonal_context
+  • Classification: plant_classification (primary_use, is_edible, is_weed, etc.)
+  • Nutrients: nutrient_recommendations (null if vital_signs.nutrients ≥ 75)
+  • Harvest: harvest_guide (null for non-edible plants)
+  • Pest: pest_detected, pest_name, pest_treatment
+  • Growth: growth_milestones.narrative (if prior scans exist)
        ↓
-  Supabase DB update → Realtime push to client
+  DB update → plantnet_reference_image stored (or preserved from prior scan on re-run)
+       ↓
+  Realtime push to client
 ```
 
 ---
@@ -231,7 +263,7 @@ User uploads 1–3 images (whole plant / leaf / stem)
 | `ScientificName` | text | Genus species |
 | `HealthStatus` | text | 2–4 word label e.g. "Mildly Stressed" |
 | `AccuracyScore` | integer | Computed confidence 60–93 |
-| `CareInstructions` | jsonb | Array of `{title, description}` |
+| `CarePlan` | jsonb | Array of `{title, description}` care instructions |
 | `care_schedule` | jsonb | `{water_every_days, fertilise_every_days, check_pests_every_days, notes}` |
 | `pest_detected` | boolean | |
 | `pest_name` | text | |
@@ -241,6 +273,10 @@ User uploads 1–3 images (whole plant / leaf / stem)
 | `seasonal_context` | text | Care note for current month |
 | `vital_signs` | jsonb | `{hydration, light, nutrients, pest_risk}` — 0–100 integer scores |
 | `growth_milestones` | jsonb | `{narrative: "..."}` — Gemini-generated growth comparison sentence |
+| `plant_classification` | jsonb | `{primary_use, is_edible, edible_parts, edibility_notes, is_weed, weed_action, cultivation_status}` |
+| `plantnet_reference_image` | text | PlantNet reference leaf image URL (medium size) — shown when AccuracyScore < 90 |
+| `nutrient_recommendations` | jsonb | `{deficiency_detected, deficiency_signs, primary_fix, organic_option, diy_option, stage_note, caution}` — null when nutrients ≥ 75 |
+| `harvest_guide` | jsonb | `{days_to_first_harvest, current_stage_estimate, visual_readiness_cues, check_frequency, how_to_harvest, post_harvest_tip, important_warning}` — null for non-edible plants |
 | `plant_nickname` | text | User-assigned label (groups scans together) |
 | `preferred_language` | text | EN / HI / TA / TE |
 | `IsCorrect` | boolean | User feedback thumbs-up/down |
@@ -261,8 +297,9 @@ User uploads 1–3 images (whole plant / leaf / stem)
 | `plant_care_actions` | `user_id`, `plant_name`, `action_type`, `actioned_at` | Watering/fertilising/pest-check log |
 | `plant_conversations` | `log_id`, `user_id`, `messages jsonb` | Q&A history per scan |
 | `identification_feedback` | `log_id`, `user_id`, `user_correction` | Thumbs-down corrections |
-| `plantnet_cache` | `image_hash` (SHA-256), `result jsonb` | PlantNet API response cache |
+| `plantnet_cache` | `image_hash` (SHA-256), `result jsonb` | PlantNet API response cache (60-day TTL) |
 | `user_profiles` | `id` (= auth user id), `email`, `guest_id` | Magic-link auth user profiles |
+| `follow_up_reminders` | `log_id`, `user_id`, `remind_at`, `processed` | Pest follow-up push notifications (7 days after pest scan) |
 
 ---
 
@@ -276,10 +313,10 @@ User uploads 1–3 images (whole plant / leaf / stem)
 | Database | Supabase Postgres |
 | Storage | Supabase Storage (`plant_images` bucket, public) |
 | Realtime | Supabase Realtime (Postgres changes) |
-| Plant ID | PlantNet API (free tier, 500 req/day, SHA-256 cache) |
+| Plant ID | PlantNet API (free tier, 500 req/day, SHA-256 cache, 60-day TTL) |
 | AI Analysis | Google Gemini 2.5 Flash (`thinkingBudget: 0`) |
 | Push | Web Push via VAPID (`care-reminder` edge function) |
-| Email | Brevo transactional API (`weekly-digest` edge function) |
+| Email | Brevo transactional API (`weekly-digest` + `support-request` edge functions) |
 | Analytics | PostHog (us.i.posthog.com, 15 events) |
 | Observability | Sentry (ErrorBoundary + `VITE_SENTRY_DSN`) |
 | Location | Browser Geolocation + ipapi.co fallback |
@@ -291,3 +328,18 @@ User uploads 1–3 images (whole plant / leaf / stem)
 English · Hindi · Tamil · Telugu
 
 Language selection stored in `localStorage` as `plant_care_prefs`. Report language sent as `preferred_language` in the DB insert and used in the Gemini prompt. Voice Q&A uses language-appropriate speech recognition locale (en-US / hi-IN / ta-IN / te-IN).
+
+---
+
+## Security Model
+
+| Area | Implementation |
+|---|---|
+| Auth | Magic link only (Supabase Auth). Guest users get `crypto.randomUUID()`-based guest IDs. |
+| RLS | `plant_logs`: anon insert/select/delete (user_id must not be null for delete). Auth users scoped to `auth.uid()`. |
+| Rate limiting | `plant-processor`: 10 scans/user/day (corrections exempt). `plant-chat`: 20 Q&A questions/user/day. |
+| Q&A identity | `plant-chat` verifies `user_id` against Supabase JWT for authenticated users; guests must pass `guest_`-prefixed ID. |
+| Q&A turn limit | Enforced from DB record count, not client-supplied `messages` body. |
+| Unsubscribe | Weekly digest unsubscribe URL is HMAC-SHA256 signed (`UNSUBSCRIBE_SECRET`). |
+| Guest cleanup | pg_cron job (3am UTC daily) deletes guest `plant_logs` rows older than 30 days. |
+| Offline queue | IndexedDB (`botaniq_offline_v1`); blobs stored locally; auto-flushed on `window online`. |

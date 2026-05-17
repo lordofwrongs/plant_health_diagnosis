@@ -23,31 +23,43 @@ A state-of-the-art plant intelligence companion for home gardeners — accurate 
 | Weather-aware care advice | Browser geolocation + ipapi.co fallback |
 | Multi-angle diagnosis (3 slots) | Whole plant / leaf / stem |
 | Pest identification + treatment plan | Gemini instruction, pest card in UI |
+| Pest follow-up reminder push notification | Sent 7 days after pest-detected scan |
 | Vital Signs panel (Hydration/Light/Nutrients/Pest Risk) | 0–100 progress bars |
 | Toxicity/Safety card (cat/dog/human) | Per-species coloured risk pills |
 | Environment card (light analysis + seasonal context) | From photo analysis + current month |
+| Plant classification (edibility, weed, use category) | `plant_classification` jsonb, shown in About tab |
+| Nutrient deficiency recommendations | Specific products, organic options, DIY recipes; Care tab |
+| Harvest timing guide for edible plants | Visual readiness cues, days to harvest; Care tab |
+| PlantNet reference leaf image | Shown when AccuracyScore < 90 to help verify ID |
+| 3-tab results layout (Diagnosis / Care / About) | Replaces 14-card linear scroll |
 | Growth narratives across scans | Gemini-generated warm 1–2 sentence comparison |
-| PlantNet SHA-256 result caching | `plantnet_cache` table |
+| PlantNet SHA-256 result caching | `plantnet_cache` table, 60-day TTL |
 | Permanent garden with cross-device recovery | Magic link auth + guest_id migration |
 | My Plants 2-column photo grid | HistoryScreen with skeleton shimmer loading |
 | Per-plant detail screen (hero, timeline, care badge) | PlantDetailScreen |
-| User feedback corrections + Q&A (3 turns/scan) | Skips PlantNet on re-run; anti-anchoring |
+| User feedback corrections + Q&A (3 turns/scan, DB-enforced) | Skips PlantNet on re-run; anti-anchoring |
 | Voice Q&A via Web Speech API | Language-aware; gracefully hidden when unsupported |
 | Push notifications (VAPID) + per-plant mute | Global opt-in in PlantDetailScreen, 8am local |
 | Watering countdown + Mark Watered | Resets countdown, logged to `plant_care_actions` |
-| Weekly email digest (Brevo) | Sunday 8am UTC; one-click unsubscribe |
+| Weekly email digest (Brevo) | Sunday 8am UTC; HMAC-signed one-click unsubscribe |
+| In-app support form | `?` nav button → email to botaniqsupport@gmail.com via Brevo |
+| Offline scan queue (IndexedDB) | Auto-flushes when connection returns |
 | Onboarding tour | Banner + pulsing slot borders; auto-dismisses |
 | Sample result preview on first visit | Horizontal card above upload; hides on first photo |
 | First-scan celebration | Floating leaf particles + bouncing card with plant name |
 | Empty garden redesign | Fan of 3 overlapping photo cards |
 | Correction re-run skeleton | Shimmer cards replace stale content during re-analysis |
-| Care reminder nudge in ResultsScreen | "Set watering reminders in My Garden →" button |
+| Care reminder nudge in ResultsScreen | In Care tab; navigates to PlantDetailScreen |
 | PWA — installable, offline-capable | Icons 192+512 PNG + SVG, theme `#1B4332` |
 | Colourblind-safe health palette | Teal (`#0D9488`) / Amber / Red — no green/red reliance |
 | HistoryScreen skeleton shimmer | 4-card shimmer grid replaces loading spinner |
 | Accessibility | ARIA labels, roles, alt text |
 | PostHog analytics | 15 events across scan funnel |
 | Sentry error tracking | ErrorBoundary + DSN wired |
+| Android camera bottom sheet | Native-style sheet (📷 Take Photo / 🖼️ Gallery / Cancel) |
+| iOS safe area + viewport height fix | `env(safe-area-inset-bottom)` + `100dvh` / `100svh` |
+| Security hardening | Rate limits, DB-side turn limits, JWT identity checks, RLS hardened |
+| Guest data cleanup | pg_cron daily at 3am UTC; 30-day retention |
 
 ---
 
@@ -87,7 +99,7 @@ Tiered result cards (colour + border by confidence tier), "We're not sure" banne
 ---
 
 ### ✅ Sprint 6 — PlantNet Caching
-PlantNet SHA-256 result caching (`plantnet_cache` table) — quota protection and repeat ID speedup. PlantNet quota monitoring (warns at ≥400/day in edge function logs).
+PlantNet SHA-256 result caching (`plantnet_cache` table) — quota protection and repeat ID speedup. PlantNet quota monitoring (warns at ≥400/day in edge function logs). Cache TTL: 60 days.
 
 ---
 
@@ -164,7 +176,7 @@ Sentry ErrorBoundary active (`VITE_SENTRY_DSN`). PostHog 15-event funnel (`app_o
 ---
 
 ### ✅ Sprint 17 — Weekly Email Digest
-Registered users receive a weekly garden digest every Sunday at 8am UTC via Brevo transactional email API. Content: plant health status, watering countdown, pest alerts. Opt-out only with one-click unsubscribe. `email_digest_opt_out` column on `users` table. `weekly-digest` edge function deployed.
+Registered users receive a weekly garden digest every Sunday at 8am UTC via Brevo transactional email API. Content: plant health status, watering countdown, pest alerts. Opt-out only with HMAC-SHA256 signed one-click unsubscribe. `email_digest_opt_out` column on `users` table. `weekly-digest` edge function deployed.
 
 ---
 
@@ -172,6 +184,61 @@ Registered users receive a weekly garden digest every Sunday at 8am UTC via Brev
 1. **Growth narratives** — Gemini writes 1–2 warm, specific sentences comparing current and previous scan. Stored in `plant_logs.growth_milestones.narrative`. Shown in Health Journey card.
 2. **Correction re-run skeleton** — All result content hidden during re-analysis; 4 skeleton shimmer cards shown instead of stale data.
 3. **Care reminder nudge** — "🔔 Set watering reminders in My Garden →" pill button at bottom of Care Schedule section in ResultsScreen.
+
+---
+
+### ✅ Bug Fix — Android Camera
+Android browsers opened file manager only (no camera option). Fixed: `isAndroid` UA detection via `useMemo` inside `UploadScreen`; slot tap shows native-style bottom sheet (📷 Take Photo / 🖼️ Choose from Gallery / Cancel); two hidden inputs per slot — `capture="environment"` for camera, no capture for gallery. iOS unchanged. Scroll-lock prevents background scroll while sheet is open.
+
+---
+
+### ✅ Sprint 19 — Security Hardening + Stability
+Comprehensive security and stability fixes from full codebase review:
+- Q&A turn limit moved to DB-side enforcement (bypass-proof)
+- `plant-chat` user identity verified via JWT
+- PostgREST filter injection fixed with parameterized queries
+- Gemini timeout added to `plant-chat` (30s)
+- Polling changed to `status`-only then full fetch on done
+- Rate limit: 10 scans/user/day in `plant-processor` (corrections exempt)
+- `care-reminder` paginated to batches of 100
+- Language dropdown click-outside handler
+- Q&A cleared on correction re-run
+- Correction poll race condition fixed
+- Guest ID uses `crypto.randomUUID()`
+- Q&A question length capped at 500 chars
+- PlantNet cache TTL: 60 days
+- `care-reminder` misleading Bearer check removed
+- Daily guest log cleanup cron at 3am UTC
+- Anon delete RLS tightened
+
+---
+
+### ✅ Sprint 20 — Classification UI + Pest Reminders + Offline Queue + Q&A Rate Limit
+1. **ClassificationCard** — `primary_use` badge (teal=vegetable/fruit/herb, amber=weed), edible parts + notes, amber weed-removal action box. Reads from `plant_classification` jsonb.
+2. **Pest follow-up reminders** — `plant-processor` inserts into `follow_up_reminders` (remind_at = now + 7 days) after every pest-detected scan; message names pest and plant.
+3. **Offline scan queue** — `UploadScreen` checks `navigator.onLine`; offline path saves to IndexedDB (`botaniq_offline_v1`); `window online` event auto-flushes. Blue banner shows queued count.
+4. **Q&A daily rate limit** — `plant-chat` sums `role: 'user'` messages across all conversations updated in last 24 hours; returns 429 at ≥20.
+
+---
+
+### ✅ Sprint 21 — Pest Follow-up Delivery + Cross-Platform Baseline
+1. **Pest follow-up notifications delivered** — `care-reminder` reads `follow_up_reminders` after each watering pass; sends push notification per subscribed user; marks `processed = true` regardless of subscription status.
+2. **iOS safe area on bottom sheet** — Cancel button padding changed to `max(40px, calc(env(safe-area-inset-bottom) + 20px))` to clear iPhone home indicator.
+3. **Viewport height fix** — `#root` uses `min-height: 100dvh`; app container uses `100svh` to prevent iOS Safari address-bar overflow clipping.
+
+---
+
+### ✅ Sprint 22 — In-App Support Form
+`?` button in nav opens `SupportModal` — name (optional), email (required), message (required, 1000 char limit). POSTs to new `support-request` edge function which sends HTML email to botaniqsupport@gmail.com via Brevo with Reply-To set to user's email. Confirmation screen shows all submitted details + "Email myself a copy" mailto button. Error boundary fallback retains mailto link for crash scenarios.
+
+---
+
+### ✅ Sprint 23 — Results Page Overhaul
+1. **3-tab layout** — `ResultsScreen` restructured from 14-card linear scroll into Diagnosis / Care / About tabs. Feedback widget and Q&A always below tabs.
+2. **ReferenceImagePanel** — when PlantNet returns a reference image and `AccuracyScore < 90`, shows compact leaf comparison card ("Does your plant's leaf shape match this?") between hero and tab bar. PlantNet URL changed to `include-related-images=true`; URL stored in `plant_logs.plantnet_reference_image`.
+3. **NutrientCard** — Gemini produces `nutrient_recommendations` jsonb: deficiency detection, primary fix (product/recipe/application), organic alternative, DIY recipe, stage note, caution. Null when nutrients ≥ 75 and no visible deficiency. Shown in Care tab.
+4. **HarvestGuideCard** — Gemini produces `harvest_guide` jsonb for edible plants: days to first harvest, current stage, visual readiness cues (✓ list), how-to-harvest, post-harvest tip, important warning. Null for non-edible plants. Shown in Care tab.
+5. **DB migration** — `sprint23_results_overhaul.sql` adds `plantnet_reference_image`, `nutrient_recommendations`, `harvest_guide` to `plant_logs`.
 
 ---
 
@@ -184,9 +251,15 @@ These are not planned sprints — they are candidate improvements if the app gro
 | **Monetisation** | Stripe freemium, scan usage limit, Pro gating — deliberately excluded from v1.0 |
 | **Growth timeline visualisation** | Chart or timeline of health scores across scans per plant |
 | **Community plant library** | Shared identification database from anonymised scan data |
-| **Offline scan queue** | Queue scans when offline; submit when connection returns |
+| **Fertilise & Pest Check actions in UI** | DB supports it (`plant_care_actions`); UI only exposes watering |
+| **Search / Filter in My Garden** | Filter by plant name or nickname — client-side only, no backend change |
+| **Share functionality** | Web Share API — plant name, health, confidence, app URL |
+| **Preserve photos on scan error** | Lift `slotImages` to App.jsx; "Retry with same photos" on error |
+| **Account logout + data export** | `supabase.auth.signOut()` + edge function to delete all user data |
+| **Dark mode** | CSS custom property overrides via `prefers-color-scheme: dark` |
 | **Apple/Google sign-in** | Reduce friction vs magic link for mobile users |
 | **PlantNet quota upgrade** | Paid PlantNet plan for >500 req/day if traffic demands it |
+| **Weather-driven care alerts** | Use `weatherSnippet` in Gemini prompt to trigger indoor/watering alerts |
 
 ---
 
