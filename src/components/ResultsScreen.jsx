@@ -21,7 +21,7 @@ const MAX_QA_TURNS = 3
 
 export default function ResultsScreen({ result, userLanguage, onReset, onBack, allScans = [], onSelectScan }) {
   // Feedback state
-  const [feedbackStatus, setFeedbackStatus] = useState(null) // 'correct' | 'incorrect'
+  const [feedbackStatus, setFeedbackStatus] = useState(null)
   const [showConfTip, setShowConfTip] = useState(false)
 
   // Correction modal state
@@ -50,6 +50,9 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
   const speechSupported = typeof window !== 'undefined' &&
     ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)
 
+  // Active results tab
+  const [activeTab, setActiveTab] = useState('diagnosis')
+
   // Sync localResult when parent passes a new scan (timeline navigation)
   useEffect(() => {
     setLocalResult(result)
@@ -59,6 +62,7 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
     setQaMessages([])
     setQaLoaded(false)
     setQaOpen(false)
+    setActiveTab('diagnosis')
   }, [result?.id])
 
   // Cleanup polling on unmount
@@ -183,7 +187,7 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
         try {
           const { data } = await supabase
             .from('plant_logs')
-            .select('status, PlantName, ScientificName, AccuracyScore, HealthStatus, HealthColor, VisualAnalysis, CarePlan, ExpertTip, WeatherAlert, care_schedule, pest_detected, pest_name, pest_treatment, plantnet_candidates, vernacular_metadata, image_url, error_details, toxicity, light_intensity_analysis, seasonal_context, vital_signs, growth_milestones, plant_classification')
+            .select('status, PlantName, ScientificName, AccuracyScore, HealthStatus, HealthColor, VisualAnalysis, CarePlan, ExpertTip, WeatherAlert, care_schedule, pest_detected, pest_name, pest_treatment, plantnet_candidates, vernacular_metadata, image_url, error_details, toxicity, light_intensity_analysis, seasonal_context, vital_signs, growth_milestones, plant_classification, nutrient_recommendations, harvest_guide, plantnet_reference_image')
             .eq('id', localResult.id)
             .single()
           if (data?.status === 'done') {
@@ -277,6 +281,12 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
 
   const TOXICITY_COLOR = { safe: '#0D9488', caution: '#D97706', toxic: '#DC2626', unknown: 'var(--text-4)' }
 
+  const TABS = [
+    { id: 'diagnosis', label: 'Diagnosis' },
+    { id: 'care',      label: 'Care'      },
+    { id: 'about',     label: 'About'     },
+  ]
+
   return (
     <div style={styles.page}>
       {/* Correction modal — fixed overlay */}
@@ -344,17 +354,6 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
         )}
 
         {!rerunning && (<>
-
-        {/* Weather alert */}
-        {localResult?.WeatherAlert && (
-          <div className="fade-up" style={styles.weatherCard}>
-            <span style={styles.weatherIcon}>⚠️</span>
-            <div>
-              <p style={styles.weatherTitle}>Climate Alert</p>
-              <p style={styles.weatherText}>{localResult.WeatherAlert}</p>
-            </div>
-          </div>
-        )}
 
         {/* Hero card */}
         <div className="fade-up verdant-card" style={{
@@ -443,250 +442,311 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
           </div>
         </div>
 
-        {/* Vital Signs meters */}
-        {localResult?.vital_signs && (
-          <div className="fade-up-delay-1 verdant-card" style={styles.section}>
-            <h3 style={styles.sectionTitle}>Vital Signs</h3>
-            <div style={styles.vitalList}>
-              {[
-                { key: 'hydration', label: 'Hydration', icon: '💧', invert: false },
-                { key: 'light',     label: 'Light',     icon: '☀️', invert: false },
-                { key: 'nutrients', label: 'Nutrients', icon: '🌱', invert: false },
-                { key: 'pest_risk', label: 'Pest Risk', icon: '🐛', invert: true },
-              ].map(({ key, label, icon, invert }) => {
-                const raw = localResult.vital_signs[key] ?? 50
-                const score = Math.min(100, Math.max(0, Math.round(raw)))
-                const effective = invert ? 100 - score : score
-                const barColor = effective >= 70 ? '#0D9488' : effective >= 40 ? '#D97706' : '#DC2626'
-                return (
-                  <div key={key} style={styles.vitalRow}>
-                    <span style={styles.vitalIcon} aria-hidden="true">{icon}</span>
-                    <span style={styles.vitalLabel}>{label}</span>
-                    <div style={styles.vitalBarTrack} role="meter" aria-valuenow={score} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
-                      <div style={{ ...styles.vitalBarFill, width: `${score}%`, background: barColor }} />
-                    </div>
-                    <span style={{ ...styles.vitalScore, color: barColor }}>{score}</span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
+        {/* PlantNet reference image panel — only shown for < 90% confidence */}
+        {localResult?.plantnet_reference_image && (localResult?.AccuracyScore ?? 100) < 90 && (
+          <ReferenceImagePanel
+            imageUrl={localResult.plantnet_reference_image}
+            scientificName={localResult.ScientificName}
+          />
         )}
 
-        {/* Health journey */}
-        {previousScan && (
-          <div className="fade-up-delay-1 verdant-card" style={styles.section}>
-            <h3 style={styles.sectionTitle}>Health Journey</h3>
-            <div style={styles.journeyGrid}>
-              <div style={styles.journeyItem}>
-                <span style={styles.journeyLabel}>Previous scan</span>
-                <span style={styles.journeyValue}>
-                  {new Date(previousScan.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                </span>
-              </div>
-              <div style={styles.journeyItem}>
-                <span style={styles.journeyLabel}>Previous status</span>
-                <span style={{ ...styles.journeyValue, color: previousScan.HealthColor || 'var(--mid)' }}>
-                  {previousScan.HealthStatus}
-                </span>
-              </div>
-            </div>
-            <div style={styles.divider} />
-            <p style={styles.trendNote}>
-              {localResult?.growth_milestones?.narrative
-                ? localResult.growth_milestones.narrative
-                : localResult?.HealthStatus === previousScan?.HealthStatus
-                  ? 'Plant conditions remain consistent with the last observation.'
-                  : 'A change in health status has been detected since your last scan.'}
-            </p>
-          </div>
-        )}
-
-        {/* Visual analysis */}
-        <div className="fade-up-delay-1 verdant-card" style={styles.section}>
-          <h3 style={styles.sectionTitle}>Visual Analysis</h3>
-          <p style={styles.bodyText}>{localResult?.VisualAnalysis}</p>
-        </div>
-
-        {/* Care plan */}
-        <div className="fade-up-delay-2 verdant-card" style={styles.section}>
-          <h3 style={styles.sectionTitle}>Care Recommendations</h3>
-          <div style={styles.stepList}>
-            {recommendations.map((step, i) => (
-              <div key={i} style={styles.stepItem}>
-                <div style={styles.stepNum}>{i + 1}</div>
-                <p style={styles.stepText}>{step.replace(/[•*-]/g, '').trim()}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Environment — light + seasonal context */}
-        {(localResult?.light_intensity_analysis || localResult?.seasonal_context) && (
-          <div className="fade-up-delay-2 verdant-card" style={styles.section}>
-            <h3 style={styles.sectionTitle}>Environment</h3>
-            {localResult.light_intensity_analysis && (
-              <div style={styles.envRow}>
-                <span style={styles.envIcon} aria-hidden="true">☀️</span>
-                <p style={styles.envText}>{localResult.light_intensity_analysis}</p>
-              </div>
-            )}
-            {localResult.light_intensity_analysis && localResult.seasonal_context && (
-              <div style={styles.divider} />
-            )}
-            {localResult.seasonal_context && (
-              <div style={styles.envRow}>
-                <span style={styles.envIcon} aria-hidden="true">📅</span>
-                <p style={styles.envText}>{localResult.seasonal_context}</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Care schedule */}
-        {localResult?.care_schedule && (localResult.care_schedule.water_every_days || localResult.care_schedule.fertilise_every_days) && (
-          <div className="fade-up-delay-2 verdant-card" style={styles.section}>
-            <h3 style={styles.sectionTitle}>Care Schedule</h3>
-            <div style={styles.scheduleGrid}>
-              {localResult.care_schedule.water_every_days && (
-                <div style={styles.scheduleItem}>
-                  <span style={styles.scheduleIcon}>💧</span>
-                  <span style={styles.scheduleLabel}>Water</span>
-                  <span style={styles.scheduleFreq}>Every {localResult.care_schedule.water_every_days} days</span>
-                </div>
-              )}
-              {localResult.care_schedule.fertilise_every_days && (
-                <div style={styles.scheduleItem}>
-                  <span style={styles.scheduleIcon}>🌱</span>
-                  <span style={styles.scheduleLabel}>Fertilise</span>
-                  <span style={styles.scheduleFreq}>Every {localResult.care_schedule.fertilise_every_days} days</span>
-                </div>
-              )}
-              {localResult.care_schedule.check_pests_every_days && (
-                <div style={styles.scheduleItem}>
-                  <span style={styles.scheduleIcon}>🔍</span>
-                  <span style={styles.scheduleLabel}>Check pests</span>
-                  <span style={styles.scheduleFreq}>Every {localResult.care_schedule.check_pests_every_days} days</span>
-                </div>
-              )}
-            </div>
-            {localResult.care_schedule.notes && (
-              <p style={{ ...styles.bodyText, marginTop: '14px', fontSize: '13px', color: 'var(--text-3)' }}>
-                {localResult.care_schedule.notes}
-              </p>
-            )}
-            <button style={styles.reminderNudge} onClick={onBack}>
-              🔔 Set watering reminders in My Garden →
+        {/* Tab bar */}
+        <div style={styles.tabBar} role="tablist" aria-label="Results sections">
+          {TABS.map(tab => (
+            <button
+              key={tab.id}
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              style={{ ...styles.tabBtn, ...(activeTab === tab.id ? styles.tabBtnActive : {}) }}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
             </button>
-          </div>
-        )}
+          ))}
+        </div>
 
-        {/* Pest detection */}
-        {localResult?.pest_detected && localResult?.pest_name && (
-          <div className="fade-up-delay-2 verdant-card" style={{ ...styles.section, ...styles.pestSection }} role="alert" aria-label="Pest detected">
-            <div style={styles.pestHeader}>
-              <span style={{ fontSize: '22px', flexShrink: 0 }} aria-hidden="true">🐛</span>
-              <div>
-                <h3 style={{ ...styles.sectionTitle, color: '#C2410C', marginBottom: '2px' }}>Pest Detected</h3>
-                <p style={styles.pestName}>{localResult.pest_name}</p>
+        {/* ── Diagnosis Tab ─────────────────────────────────────────────────── */}
+        {activeTab === 'diagnosis' && (<>
+
+          {/* Visual Analysis — first, so the user sees the narrative before any numbers */}
+          <div className="fade-up verdant-card" style={styles.section}>
+            <h3 style={styles.sectionTitle}>Visual Analysis</h3>
+            <p style={styles.bodyText}>{localResult?.VisualAnalysis}</p>
+          </div>
+
+          {/* Vital Signs meters */}
+          {localResult?.vital_signs && (
+            <div className="fade-up verdant-card" style={styles.section}>
+              <h3 style={styles.sectionTitle}>Vital Signs</h3>
+              <div style={styles.vitalList}>
+                {[
+                  { key: 'hydration', label: 'Hydration', icon: '💧', invert: false },
+                  { key: 'light',     label: 'Light',     icon: '☀️', invert: false },
+                  { key: 'nutrients', label: 'Nutrients', icon: '🌱', invert: false },
+                  { key: 'pest_risk', label: 'Pest Risk', icon: '🐛', invert: true },
+                ].map(({ key, label, icon, invert }) => {
+                  const raw = localResult.vital_signs[key] ?? 50
+                  const score = Math.min(100, Math.max(0, Math.round(raw)))
+                  const effective = invert ? 100 - score : score
+                  const barColor = effective >= 70 ? '#0D9488' : effective >= 40 ? '#D97706' : '#DC2626'
+                  return (
+                    <div key={key} style={styles.vitalRow}>
+                      <span style={styles.vitalIcon} aria-hidden="true">{icon}</span>
+                      <span style={styles.vitalLabel}>{label}</span>
+                      <div style={styles.vitalBarTrack} role="meter" aria-valuenow={score} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
+                        <div style={{ ...styles.vitalBarFill, width: `${score}%`, background: barColor }} />
+                      </div>
+                      <span style={{ ...styles.vitalScore, color: barColor }}>{score}</span>
+                    </div>
+                  )
+                })}
               </div>
             </div>
-            {Array.isArray(localResult.pest_treatment) && (
-              <div style={styles.stepList}>
-                {localResult.pest_treatment.map((step, i) => (
-                  <div key={i} style={styles.stepItem}>
-                    <div style={{ ...styles.stepNum, background: '#EA580C' }} aria-hidden="true">{i + 1}</div>
-                    <p style={styles.stepText}>{String(step)}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-            <p style={styles.pestWarning}>Check nearby plants for early signs of the same pest.</p>
-          </div>
-        )}
+          )}
 
-        {/* Toxicity / Safety card */}
-        {localResult?.toxicity && (localResult.toxicity.risk_cats || localResult.toxicity.risk_dogs || localResult.toxicity.risk_humans) && (
-          <div className="fade-up-delay-2 verdant-card" style={styles.section}>
-            <h3 style={styles.sectionTitle}>Safety</h3>
-            <div style={styles.toxGrid}>
-              {[
-                { label: 'Cats',   icon: '🐱', value: localResult.toxicity.risk_cats },
-                { label: 'Dogs',   icon: '🐶', value: localResult.toxicity.risk_dogs },
-                { label: 'Humans', icon: '👤', value: localResult.toxicity.risk_humans },
-              ].filter(r => r.value).map(({ label, icon, value }) => {
-                const level = getToxicityLevel(value)
-                return (
-                  <div key={label} style={styles.toxRow}>
-                    <span style={styles.toxIcon} aria-hidden="true">{icon}</span>
-                    <span style={styles.toxLabel}>{label}</span>
-                    <span style={{ ...styles.toxValue, color: TOXICITY_COLOR[level], borderColor: TOXICITY_COLOR[level], background: `${TOXICITY_COLOR[level]}12` }}>
-                      {value}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-            {localResult.toxicity.notes && (
-              <p style={{ ...styles.bodyText, marginTop: '14px', fontSize: '13px', color: 'var(--text-3)' }}>
-                {localResult.toxicity.notes}
+          {/* Health Journey */}
+          {previousScan && (
+            <div className="fade-up verdant-card" style={styles.section}>
+              <h3 style={styles.sectionTitle}>Health Journey</h3>
+              <div style={styles.journeyGrid}>
+                <div style={styles.journeyItem}>
+                  <span style={styles.journeyLabel}>Previous scan</span>
+                  <span style={styles.journeyValue}>
+                    {new Date(previousScan.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                  </span>
+                </div>
+                <div style={styles.journeyItem}>
+                  <span style={styles.journeyLabel}>Previous status</span>
+                  <span style={{ ...styles.journeyValue, color: previousScan.HealthColor || 'var(--mid)' }}>
+                    {previousScan.HealthStatus}
+                  </span>
+                </div>
+              </div>
+              <div style={styles.divider} />
+              <p style={styles.trendNote}>
+                {localResult?.growth_milestones?.narrative
+                  ? localResult.growth_milestones.narrative
+                  : localResult?.HealthStatus === previousScan?.HealthStatus
+                    ? 'Plant conditions remain consistent with the last observation.'
+                    : 'A change in health status has been detected since your last scan.'}
               </p>
-            )}
-          </div>
-        )}
+            </div>
+          )}
 
-        {/* Classification card */}
-        {localResult?.plant_classification && (
-          <ClassificationCard classification={localResult.plant_classification} />
-        )}
+          {/* Weather Alert */}
+          {localResult?.WeatherAlert && (
+            <div className="fade-up" style={styles.weatherCard}>
+              <span style={styles.weatherIcon}>⚠️</span>
+              <div>
+                <p style={styles.weatherTitle}>Climate Alert</p>
+                <p style={styles.weatherText}>{localResult.WeatherAlert}</p>
+              </div>
+            </div>
+          )}
 
-        {/* Scan history timeline */}
-        {allScans.length > 1 && (
-          <div className="fade-up-delay-2 verdant-card" style={styles.section}>
-            <h3 style={styles.sectionTitle}>Scan History ({allScans.length})</h3>
-            <div style={styles.timelineList}>
-              {allScans.map((scan, i) => {
-                const isCurrent = scan.id === localResult?.id
-                return (
-                  <button
-                    key={scan.id}
-                    style={{ ...styles.timelineRow, ...(isCurrent ? styles.timelineRowActive : {}) }}
-                    onClick={() => !isCurrent && onSelectScan?.(scan)}
-                    disabled={isCurrent}
-                  >
-                    <span style={{ ...styles.timelineDot, background: scan.HealthColor || 'var(--leaf)' }} />
-                    <span style={styles.timelineDate}>
-                      {new Date(scan.created_at).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })}
-                    </span>
-                    <span style={{ ...styles.timelineStatus, color: scan.HealthColor || 'var(--mid)' }}>
-                      {scan.HealthStatus || '—'}
-                    </span>
-                    {isCurrent
-                      ? <span style={styles.timelineCurrent}>Viewing</span>
-                      : <span style={styles.timelineChevron}>›</span>
-                    }
-                  </button>
-                )
-              })}
+          {/* Pest detection */}
+          {localResult?.pest_detected && localResult?.pest_name && (
+            <div className="fade-up verdant-card" style={{ ...styles.section, ...styles.pestSection }} role="alert" aria-label="Pest detected">
+              <div style={styles.pestHeader}>
+                <span style={{ fontSize: '22px', flexShrink: 0 }} aria-hidden="true">🐛</span>
+                <div>
+                  <h3 style={{ ...styles.sectionTitle, color: '#C2410C', marginBottom: '2px' }}>Pest Detected</h3>
+                  <p style={styles.pestName}>{localResult.pest_name}</p>
+                </div>
+              </div>
+              {Array.isArray(localResult.pest_treatment) && (
+                <div style={styles.stepList}>
+                  {localResult.pest_treatment.map((step, i) => (
+                    <div key={i} style={styles.stepItem}>
+                      <div style={{ ...styles.stepNum, background: '#EA580C' }} aria-hidden="true">{i + 1}</div>
+                      <p style={styles.stepText}>{String(step)}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p style={styles.pestWarning}>Check nearby plants for early signs of the same pest.</p>
+            </div>
+          )}
+
+        </>)}
+
+        {/* ── Care Tab ──────────────────────────────────────────────────────── */}
+        {activeTab === 'care' && (<>
+
+          {/* Care Schedule */}
+          {localResult?.care_schedule && (localResult.care_schedule.water_every_days || localResult.care_schedule.fertilise_every_days) && (
+            <div className="fade-up verdant-card" style={styles.section}>
+              <h3 style={styles.sectionTitle}>Care Schedule</h3>
+              <div style={styles.scheduleGrid}>
+                {localResult.care_schedule.water_every_days && (
+                  <div style={styles.scheduleItem}>
+                    <span style={styles.scheduleIcon}>💧</span>
+                    <span style={styles.scheduleLabel}>Water</span>
+                    <span style={styles.scheduleFreq}>Every {localResult.care_schedule.water_every_days} days</span>
+                  </div>
+                )}
+                {localResult.care_schedule.fertilise_every_days && (
+                  <div style={styles.scheduleItem}>
+                    <span style={styles.scheduleIcon}>🌱</span>
+                    <span style={styles.scheduleLabel}>Fertilise</span>
+                    <span style={styles.scheduleFreq}>Every {localResult.care_schedule.fertilise_every_days} days</span>
+                  </div>
+                )}
+                {localResult.care_schedule.check_pests_every_days && (
+                  <div style={styles.scheduleItem}>
+                    <span style={styles.scheduleIcon}>🔍</span>
+                    <span style={styles.scheduleLabel}>Check pests</span>
+                    <span style={styles.scheduleFreq}>Every {localResult.care_schedule.check_pests_every_days} days</span>
+                  </div>
+                )}
+              </div>
+              {localResult.care_schedule.notes && (
+                <p style={{ ...styles.bodyText, marginTop: '14px', fontSize: '13px', color: 'var(--text-3)' }}>
+                  {localResult.care_schedule.notes}
+                </p>
+              )}
+              <button style={styles.reminderNudge} onClick={onBack}>
+                🔔 Set watering reminders in My Garden →
+              </button>
+            </div>
+          )}
+
+          {/* Care Recommendations */}
+          <div className="fade-up verdant-card" style={styles.section}>
+            <h3 style={styles.sectionTitle}>Care Recommendations</h3>
+            <div style={styles.stepList}>
+              {recommendations.map((step, i) => (
+                <div key={i} style={styles.stepItem}>
+                  <div style={styles.stepNum}>{i + 1}</div>
+                  <p style={styles.stepText}>{step.replace(/[•*-]/g, '').trim()}</p>
+                </div>
+              ))}
             </div>
           </div>
-        )}
 
-        {/* Expert tip */}
-        {localResult?.ExpertTip && (
-          <div className="fade-up-delay-2" style={styles.expertBox}>
-            <span style={styles.expertLabel}>PRO TIP</span>
-            <p style={styles.expertText}>{localResult.ExpertTip}</p>
-          </div>
-        )}
+          {/* Nutrient Recommendations */}
+          {localResult?.nutrient_recommendations && (
+            <NutrientCard recommendations={localResult.nutrient_recommendations} />
+          )}
 
-        {/* Photo tip */}
-        {localResult?.error_details && (
-          <div className="fade-up-delay-2" style={styles.photoTipBox}>
-            <span style={styles.photoTipLabel}>📸 PHOTO TIP</span>
-            <p style={styles.expertText}>Next time: {localResult.error_details}</p>
-          </div>
-        )}
+          {/* Harvest Guide */}
+          {localResult?.harvest_guide && localResult?.plant_classification?.is_edible && (
+            <HarvestGuideCard guide={localResult.harvest_guide} />
+          )}
+
+          {/* Environment — light + seasonal context */}
+          {(localResult?.light_intensity_analysis || localResult?.seasonal_context) && (
+            <div className="fade-up verdant-card" style={styles.section}>
+              <h3 style={styles.sectionTitle}>Environment</h3>
+              {localResult.light_intensity_analysis && (
+                <div style={styles.envRow}>
+                  <span style={styles.envIcon} aria-hidden="true">☀️</span>
+                  <p style={styles.envText}>{localResult.light_intensity_analysis}</p>
+                </div>
+              )}
+              {localResult.light_intensity_analysis && localResult.seasonal_context && (
+                <div style={styles.divider} />
+              )}
+              {localResult.seasonal_context && (
+                <div style={styles.envRow}>
+                  <span style={styles.envIcon} aria-hidden="true">📅</span>
+                  <p style={styles.envText}>{localResult.seasonal_context}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Expert Tip */}
+          {localResult?.ExpertTip && (
+            <div className="fade-up" style={styles.expertBox}>
+              <span style={styles.expertLabel}>PRO TIP</span>
+              <p style={styles.expertText}>{localResult.ExpertTip}</p>
+            </div>
+          )}
+
+        </>)}
+
+        {/* ── About Tab ─────────────────────────────────────────────────────── */}
+        {activeTab === 'about' && (<>
+
+          {/* Plant Classification */}
+          {localResult?.plant_classification && (
+            <ClassificationCard classification={localResult.plant_classification} />
+          )}
+
+          {/* Toxicity / Safety */}
+          {localResult?.toxicity && (localResult.toxicity.risk_cats || localResult.toxicity.risk_dogs || localResult.toxicity.risk_humans) && (
+            <div className="fade-up verdant-card" style={styles.section}>
+              <h3 style={styles.sectionTitle}>Safety</h3>
+              <div style={styles.toxGrid}>
+                {[
+                  { label: 'Cats',   icon: '🐱', value: localResult.toxicity.risk_cats },
+                  { label: 'Dogs',   icon: '🐶', value: localResult.toxicity.risk_dogs },
+                  { label: 'Humans', icon: '👤', value: localResult.toxicity.risk_humans },
+                ].filter(r => r.value).map(({ label, icon, value }) => {
+                  const level = getToxicityLevel(value)
+                  return (
+                    <div key={label} style={styles.toxRow}>
+                      <span style={styles.toxIcon} aria-hidden="true">{icon}</span>
+                      <span style={styles.toxLabel}>{label}</span>
+                      <span style={{ ...styles.toxValue, color: TOXICITY_COLOR[level], borderColor: TOXICITY_COLOR[level], background: `${TOXICITY_COLOR[level]}12` }}>
+                        {value}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+              {localResult.toxicity.notes && (
+                <p style={{ ...styles.bodyText, marginTop: '14px', fontSize: '13px', color: 'var(--text-3)' }}>
+                  {localResult.toxicity.notes}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Scan History Timeline */}
+          {allScans.length > 1 && (
+            <div className="fade-up verdant-card" style={styles.section}>
+              <h3 style={styles.sectionTitle}>Scan History ({allScans.length})</h3>
+              <div style={styles.timelineList}>
+                {allScans.map((scan, i) => {
+                  const isCurrent = scan.id === localResult?.id
+                  return (
+                    <button
+                      key={scan.id}
+                      style={{ ...styles.timelineRow, ...(isCurrent ? styles.timelineRowActive : {}) }}
+                      onClick={() => !isCurrent && onSelectScan?.(scan)}
+                      disabled={isCurrent}
+                    >
+                      <span style={{ ...styles.timelineDot, background: scan.HealthColor || 'var(--leaf)' }} />
+                      <span style={styles.timelineDate}>
+                        {new Date(scan.created_at).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </span>
+                      <span style={{ ...styles.timelineStatus, color: scan.HealthColor || 'var(--mid)' }}>
+                        {scan.HealthStatus || '—'}
+                      </span>
+                      {isCurrent
+                        ? <span style={styles.timelineCurrent}>Viewing</span>
+                        : <span style={styles.timelineChevron}>›</span>
+                      }
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Photo Tip */}
+          {localResult?.error_details && (
+            <div className="fade-up" style={styles.photoTipBox}>
+              <span style={styles.photoTipLabel}>📸 PHOTO TIP</span>
+              <p style={styles.expertText}>Next time: {localResult.error_details}</p>
+            </div>
+          )}
+
+        </>)}
+
+        {/* ── Always below tabs ─────────────────────────────────────────────── */}
 
         {/* Identification feedback */}
         <div className="fade-up-delay-3" style={styles.feedbackBox}>
@@ -812,6 +872,8 @@ export default function ResultsScreen({ result, userLanguage, onReset, onBack, a
   )
 }
 
+// ── ClassificationCard ───────────────────────────────────────────────────────
+
 const PRIMARY_USE_CONFIG = {
   vegetable:      { color: '#0D9488', bg: '#F0FDFA', label: 'Vegetable' },
   fruit:          { color: '#F97316', bg: '#FFF7ED', label: 'Fruit' },
@@ -828,7 +890,7 @@ const PRIMARY_USE_CONFIG = {
 function ClassificationCard({ classification }) {
   const cfg = PRIMARY_USE_CONFIG[classification.primary_use] || PRIMARY_USE_CONFIG.unknown
   return (
-    <div className="fade-up-delay-2 verdant-card" style={{ padding: '24px' }}>
+    <div className="fade-up verdant-card" style={{ padding: '24px' }}>
       <h3 style={classifStyles.title}>Plant Classification</h3>
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
         <span style={{ ...classifStyles.badge, color: cfg.color, background: cfg.bg, borderColor: cfg.color }}>
@@ -863,6 +925,160 @@ function ClassificationCard({ classification }) {
   )
 }
 
+// ── ReferenceImagePanel ──────────────────────────────────────────────────────
+
+function ReferenceImagePanel({ imageUrl, scientificName }) {
+  return (
+    <div className="fade-up verdant-card" style={refStyles.panel}>
+      <img
+        src={imageUrl}
+        alt={`Reference leaf — ${scientificName}`}
+        style={refStyles.img}
+        onError={e => { e.currentTarget.style.display = 'none' }}
+      />
+      <div style={refStyles.body}>
+        <p style={refStyles.label}>REFERENCE LEAF</p>
+        <p style={refStyles.sci}>{scientificName}</p>
+        <p style={refStyles.prompt}>
+          Does your plant's leaf shape match this? If not, tap <strong>Wrong plant</strong> below to correct it.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// ── NutrientCard ─────────────────────────────────────────────────────────────
+
+function NutrientCard({ recommendations: rec }) {
+  return (
+    <div className="fade-up verdant-card" style={{ padding: '24px' }}>
+      <h3 style={nutrientStyles.title}>Nutrients</h3>
+
+      {rec.deficiency_detected && (
+        <div style={nutrientStyles.defAlert}>
+          <span style={{ fontSize: '16px', flexShrink: 0 }}>⚠️</span>
+          <div>
+            <p style={nutrientStyles.defTitle}>{rec.deficiency_detected.charAt(0).toUpperCase() + rec.deficiency_detected.slice(1)} deficiency detected</p>
+            {rec.deficiency_signs && <p style={nutrientStyles.defText}>{rec.deficiency_signs}</p>}
+          </div>
+        </div>
+      )}
+
+      {rec.primary_fix && (
+        <div style={nutrientStyles.block}>
+          <p style={nutrientStyles.blockLabel}>Primary fix</p>
+          <p style={nutrientStyles.blockTitle}>{rec.primary_fix.product}</p>
+          <p style={nutrientStyles.blockText}>{rec.primary_fix.recipe}</p>
+          {rec.primary_fix.application && (
+            <p style={{ ...nutrientStyles.blockText, marginTop: '4px', color: 'var(--text-3)', fontStyle: 'italic' }}>
+              {rec.primary_fix.application}
+            </p>
+          )}
+        </div>
+      )}
+
+      {rec.organic_option && (
+        <div style={nutrientStyles.block}>
+          <p style={nutrientStyles.blockLabel}>🌿 Organic option</p>
+          <p style={nutrientStyles.blockTitle}>{rec.organic_option.name}</p>
+          <p style={nutrientStyles.blockText}>{rec.organic_option.recipe}</p>
+        </div>
+      )}
+
+      {rec.diy_option && (
+        <div style={nutrientStyles.block}>
+          <p style={nutrientStyles.blockLabel}>🏠 DIY option</p>
+          <p style={nutrientStyles.blockTitle}>{rec.diy_option.name}</p>
+          <p style={nutrientStyles.blockText}>{rec.diy_option.recipe}</p>
+        </div>
+      )}
+
+      {rec.stage_note && (
+        <div style={nutrientStyles.stageNote}>
+          <span style={{ fontSize: '14px', flexShrink: 0 }}>💡</span>
+          <p style={nutrientStyles.stageText}>{rec.stage_note}</p>
+        </div>
+      )}
+
+      {rec.caution && (
+        <div style={nutrientStyles.caution}>
+          <span style={{ fontSize: '14px', flexShrink: 0 }}>⚠️</span>
+          <p style={nutrientStyles.cautionText}>{rec.caution}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── HarvestGuideCard ─────────────────────────────────────────────────────────
+
+function HarvestGuideCard({ guide }) {
+  return (
+    <div className="fade-up verdant-card" style={{ padding: '24px' }}>
+      <h3 style={harvestStyles.title}>🌽 Harvest Guide</h3>
+
+      <div style={harvestStyles.metaGrid}>
+        {guide.current_stage_estimate && (
+          <div style={harvestStyles.metaItem}>
+            <span style={harvestStyles.metaLabel}>Time to harvest</span>
+            <span style={harvestStyles.metaValue}>{guide.current_stage_estimate}</span>
+          </div>
+        )}
+        {guide.days_to_first_harvest && (
+          <div style={harvestStyles.metaItem}>
+            <span style={harvestStyles.metaLabel}>Typical range</span>
+            <span style={harvestStyles.metaValue}>{guide.days_to_first_harvest}</span>
+          </div>
+        )}
+      </div>
+
+      {Array.isArray(guide.visual_readiness_cues) && guide.visual_readiness_cues.length > 0 && (
+        <>
+          <p style={harvestStyles.subLabel}>When it's ready</p>
+          <div style={harvestStyles.cueList}>
+            {guide.visual_readiness_cues.map((cue, i) => (
+              <div key={i} style={harvestStyles.cueItem}>
+                <span style={harvestStyles.cueCheck}>✓</span>
+                <span>{cue}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {guide.check_frequency && (
+        <div style={harvestStyles.infoRow}>
+          <span style={harvestStyles.infoIcon}>🔍</span>
+          <p style={harvestStyles.infoText}>{guide.check_frequency}</p>
+        </div>
+      )}
+
+      {guide.how_to_harvest && (
+        <div style={harvestStyles.infoRow}>
+          <span style={harvestStyles.infoIcon}>✂️</span>
+          <p style={harvestStyles.infoText}>{guide.how_to_harvest}</p>
+        </div>
+      )}
+
+      {guide.post_harvest_tip && (
+        <div style={harvestStyles.infoRow}>
+          <span style={harvestStyles.infoIcon}>🧺</span>
+          <p style={harvestStyles.infoText}>{guide.post_harvest_tip}</p>
+        </div>
+      )}
+
+      {guide.important_warning && (
+        <div style={harvestStyles.warning}>
+          <span style={{ fontSize: '14px', flexShrink: 0 }}>⚠️</span>
+          <p style={harvestStyles.warningText}>{guide.important_warning}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Component-level styles ───────────────────────────────────────────────────
+
 const classifStyles = {
   title: {
     fontSize: '11px', fontWeight: '800', letterSpacing: '1px',
@@ -891,6 +1107,92 @@ const classifStyles = {
     lineHeight: '1.4', fontStyle: 'italic',
   },
 }
+
+const refStyles = {
+  panel: {
+    display: 'flex', gap: '14px', alignItems: 'flex-start', padding: '16px',
+  },
+  img: {
+    width: '80px', height: '80px', borderRadius: 'var(--r-sm)',
+    objectFit: 'cover', flexShrink: 0, background: 'var(--border)',
+  },
+  body: { flex: 1 },
+  label: {
+    fontSize: '10px', fontWeight: '800', letterSpacing: '1px',
+    textTransform: 'uppercase', color: 'var(--text-4)', margin: '0 0 2px',
+  },
+  sci: {
+    fontSize: '12px', color: 'var(--text-3)', fontStyle: 'italic', margin: '0 0 6px',
+  },
+  prompt: {
+    fontSize: '12px', color: 'var(--text-3)', lineHeight: '1.5', margin: 0,
+  },
+}
+
+const nutrientStyles = {
+  title: {
+    fontSize: '11px', fontWeight: '800', letterSpacing: '1px',
+    textTransform: 'uppercase', color: 'var(--text-3)', marginBottom: '14px',
+  },
+  defAlert: {
+    display: 'flex', gap: '10px', alignItems: 'flex-start',
+    background: '#FFFBEB', border: '1px solid #FDE68A',
+    borderRadius: 'var(--r-sm)', padding: '10px 12px', marginBottom: '16px',
+  },
+  defTitle: { fontSize: '12px', fontWeight: '700', color: '#92400E', margin: '0 0 2px' },
+  defText:  { fontSize: '12px', color: '#78350F', margin: 0, lineHeight: '1.4' },
+  block: { marginBottom: '14px' },
+  blockLabel: {
+    fontSize: '10px', fontWeight: '800', letterSpacing: '0.8px',
+    textTransform: 'uppercase', color: 'var(--text-4)', margin: '0 0 4px',
+  },
+  blockTitle: { fontSize: '13px', fontWeight: '700', color: 'var(--text-1)', margin: '0 0 3px' },
+  blockText:  { fontSize: '13px', color: 'var(--text-2)', lineHeight: '1.5', margin: 0 },
+  stageNote: {
+    display: 'flex', gap: '8px', alignItems: 'flex-start',
+    background: 'rgba(82,183,136,0.08)', border: '1px solid rgba(82,183,136,0.3)',
+    borderRadius: 'var(--r-sm)', padding: '10px 12px', marginTop: '10px',
+  },
+  stageText: { fontSize: '12px', color: 'var(--primary)', margin: 0, lineHeight: '1.5', fontWeight: '500' },
+  caution: {
+    display: 'flex', gap: '8px', alignItems: 'flex-start',
+    background: '#FFF0F0', border: '1px solid #FECACA',
+    borderRadius: 'var(--r-sm)', padding: '10px 12px', marginTop: '10px',
+  },
+  cautionText: { fontSize: '12px', color: '#C62828', margin: 0, lineHeight: '1.4' },
+}
+
+const harvestStyles = {
+  title: {
+    fontSize: '11px', fontWeight: '800', letterSpacing: '1px',
+    textTransform: 'uppercase', color: 'var(--text-3)', marginBottom: '14px',
+  },
+  metaGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' },
+  metaItem: { display: 'flex', flexDirection: 'column', gap: '3px' },
+  metaLabel: {
+    fontSize: '10px', fontWeight: '700', color: 'var(--text-4)',
+    letterSpacing: '0.3px', textTransform: 'uppercase',
+  },
+  metaValue: { fontSize: '13px', color: 'var(--text-1)', fontWeight: '600', lineHeight: '1.4' },
+  subLabel: {
+    fontSize: '10px', fontWeight: '800', letterSpacing: '0.8px',
+    textTransform: 'uppercase', color: 'var(--text-4)', margin: '0 0 8px',
+  },
+  cueList: { display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '14px' },
+  cueItem: { display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '13px', color: 'var(--text-2)' },
+  cueCheck: { color: '#0D9488', fontWeight: '700', flexShrink: 0 },
+  infoRow: { display: 'flex', gap: '10px', alignItems: 'flex-start', marginBottom: '10px' },
+  infoIcon: { fontSize: '15px', flexShrink: 0, marginTop: '1px' },
+  infoText: { fontSize: '13px', color: 'var(--text-2)', lineHeight: '1.5', margin: 0 },
+  warning: {
+    display: 'flex', gap: '8px', alignItems: 'flex-start',
+    background: '#FFF0F0', border: '1px solid #FECACA',
+    borderRadius: 'var(--r-sm)', padding: '10px 12px', marginTop: '14px',
+  },
+  warningText: { fontSize: '12px', color: '#C62828', margin: 0, lineHeight: '1.5' },
+}
+
+// ── Main styles ──────────────────────────────────────────────────────────────
 
 const styles = {
   page: {
@@ -1145,6 +1447,33 @@ const styles = {
     fontSize: '11px', color: 'var(--text-3)',
     background: 'var(--mist)', border: '1px solid var(--border)',
     borderRadius: 'var(--r-full)', padding: '2px 10px',
+  },
+
+  // Tab bar
+  tabBar: {
+    display: 'flex',
+    background: 'var(--card)',
+    borderRadius: 'var(--r-lg)',
+    border: '1px solid var(--border)',
+    padding: '4px',
+    gap: '4px',
+  },
+  tabBtn: {
+    flex: 1,
+    padding: '10px 8px',
+    background: 'none',
+    border: 'none',
+    borderRadius: 'var(--r-md)',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: '600',
+    color: 'var(--text-3)',
+    transition: 'color 0.2s, background 0.2s',
+    letterSpacing: '0.2px',
+  },
+  tabBtnActive: {
+    color: 'var(--primary)',
+    background: 'var(--mist)',
   },
 
   section: { padding: '24px' },

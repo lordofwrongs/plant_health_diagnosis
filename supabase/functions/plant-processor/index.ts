@@ -160,6 +160,7 @@ interface PlantNetResult {
   family: string
   score: number
   topCandidates: Array<{ name: string; common: string; score: number }>
+  referenceImageUrl: string | null
 }
 
 async function identifyWithPlantNet(
@@ -177,7 +178,7 @@ async function identifyWithPlantNet(
     formData.append('organs', organ)
 
     const res = await fetchWithTimeout(
-      `https://my-api.plantnet.org/v2/identify/all?api-key=${apiKey}&lang=en&include-related-images=false&nb-results=3`,
+      `https://my-api.plantnet.org/v2/identify/all?api-key=${apiKey}&lang=en&include-related-images=true&nb-results=3`,
       { method: 'POST', body: formData },
       15000
     )
@@ -204,6 +205,7 @@ async function identifyWithPlantNet(
         common: ((r.species as Record<string, unknown>)?.commonNames as string[])?.[0],
         score:  Math.round(((r.score as number) ?? 0) * 100),
       })),
+      referenceImageUrl: (top.images as Array<{ url: { m: string } }>)?.[0]?.url?.m ?? null,
     }
 
     logger.info('plantnet', `Top result: ${result.scientificName} (${result.score}%)`, {
@@ -428,13 +430,15 @@ serve(async (req: Request) => {
     // For correction re-runs, fetch prior PlantNet candidates from the existing record
     // instead of calling PlantNet again — the image hasn't changed, result would be identical
     let correctionCandidates: Array<{ name: string; common: string; score: number }> = []
+    let existingRefImage: string | null = null
     if (userCorrection) {
       const { data: existingLog } = await supabase
         .from('plant_logs')
-        .select('plantnet_candidates')
+        .select('plantnet_candidates, plantnet_reference_image')
         .eq('id', record_id)
         .single()
       correctionCandidates = existingLog?.plantnet_candidates ?? []
+      existingRefImage = existingLog?.plantnet_reference_image ?? null
       logger.info('correction_rerun', `User correction: "${userCorrection}", prior candidates: ${correctionCandidates.length}`)
     }
 
@@ -672,6 +676,51 @@ serve(async (req: Request) => {
             }
           },
           required: ["primary_use", "is_edible", "is_weed", "cultivation_status"]
+        },
+        nutrient_recommendations: {
+          type: "object",
+          nullable: true,
+          properties: {
+            deficiency_detected: { type: "string", nullable: true },
+            deficiency_signs:    { type: "string", nullable: true },
+            primary_fix: {
+              type: "object", nullable: true,
+              properties: {
+                product:     { type: "string" },
+                recipe:      { type: "string" },
+                application: { type: "string" }
+              }
+            },
+            organic_option: {
+              type: "object", nullable: true,
+              properties: {
+                name:   { type: "string" },
+                recipe: { type: "string" }
+              }
+            },
+            diy_option: {
+              type: "object", nullable: true,
+              properties: {
+                name:   { type: "string" },
+                recipe: { type: "string" }
+              }
+            },
+            stage_note: { type: "string", nullable: true },
+            caution:    { type: "string", nullable: true }
+          }
+        },
+        harvest_guide: {
+          type: "object",
+          nullable: true,
+          properties: {
+            days_to_first_harvest:  { type: "string", nullable: true },
+            current_stage_estimate: { type: "string", nullable: true },
+            visual_readiness_cues:  { type: "array", nullable: true, items: { type: "string" } },
+            check_frequency:        { type: "string", nullable: true },
+            how_to_harvest:         { type: "string", nullable: true },
+            post_harvest_tip:       { type: "string", nullable: true },
+            important_warning:      { type: "string", nullable: true }
+          }
         }
       },
       required: [
@@ -742,7 +791,26 @@ STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
 13. SEASONAL CONTEXT: 1–2 sentences on care adjustments for ${new Date().toLocaleString('default', { month: 'long' })} in the ${(log.latitude ?? 0) >= 0 ? 'Northern' : 'Southern'} Hemisphere in ${userLang}.
 14. GROWTH NARRATIVE: ${nearbyLogs?.length ? `The previous scan showed this plant as "${nearbyLogs[0].HealthStatus}". Write 1–2 warm, specific sentences comparing the current condition to that previous scan — what has improved, stayed the same, or needs attention. Be encouraging and concrete. Write in ${userLang}.` : 'This is the first scan for this plant. Set growth_narrative to null.'}
 15. BOTANICAL EXPERTISE: Specifically look for signs of being 'root-bound' by analyzing the pot-to-foliage size ratio. Also check for specific nutrient deficiencies (e.g., interveinal chlorosis for Magnesium, yellowing new growth for Iron). Mention these specific conditions in the 'analysis' and 'recovery_steps' if detected.
-16. PLANT CLASSIFICATION: Determine the plant's primary use and edibility.
+16. NUTRIENT RECOMMENDATIONS: Only populate if a specific deficiency is visible OR vital_signs.nutrients < 65.
+  - deficiency_detected: name the specific deficiency (e.g., "magnesium", "iron", "calcium") or null.
+  - deficiency_signs: describe the exact visual symptoms in ${userLang} (e.g., "yellowing between leaf veins on older leaves") or null.
+  - primary_fix: name a specific product (e.g., "Epsom salt"), give an exact recipe and application method in ${userLang}.
+  - organic_option: a widely available organic alternative with recipe in ${userLang} (e.g., fish emulsion, compost tea, seaweed extract).
+  - diy_option: a simple home remedy in ${userLang} (e.g., banana peel water: soak 2–3 peels in 1L water for 48h, use as soil drench).
+  - stage_note: if the plant is about to flower or is fruiting, note any fertiliser switch required in ${userLang}.
+  - caution: warn against the single most common fertiliser mistake for this plant and stage in ${userLang}.
+  - If vital_signs.nutrients ≥ 75 AND no visible deficiency symptoms: set nutrient_recommendations to null.
+17. HARVEST GUIDE: Only when plant_classification.is_edible = true OR primary_use is vegetable / fruit / herb_culinary.
+  - days_to_first_harvest: typical range from transplant in plain language (e.g., "50–70 days from transplant").
+  - current_stage_estimate: estimate how far from harvest based on the photo in ${userLang}.
+  - visual_readiness_cues: 2–4 specific observable signs the produce is ready to pick in ${userLang}.
+  - check_frequency: how often to inspect once fruiting begins in ${userLang}.
+  - how_to_harvest: correct technique (cut vs. pull, tool needed) in ${userLang}.
+  - post_harvest_tip: storage tip in ${userLang}.
+  - important_warning: the single most critical mistake NOT to make in ${userLang} (e.g., for cucumber: never let fruit turn yellow on the vine — the plant stops producing once it thinks it has seeded).
+  - For herbs: include how to harvest to encourage regrowth in ${userLang}.
+  - If plant is NOT edible: set harvest_guide to null.
+18. PLANT CLASSIFICATION: Determine the plant's primary use and edibility.
   - primary_use: one of vegetable / fruit / herb_culinary / herb_medicinal / ornamental / weed / tree / succulent / invasive / unknown
   - is_edible: true if any part is edible by humans under normal preparation
   - edible_parts: which parts and how (e.g. "young leaves — blanch before eating")
@@ -839,8 +907,11 @@ STEP 1 — FULL ANALYSIS (complete only when is_analyzable = true):
         seasonal_context:        typeof result.seasonal_context === 'string' ? result.seasonal_context : null,
         vital_signs:             result.vital_signs ?? null,
         growth_milestones:       result.growth_narrative ? { narrative: String(result.growth_narrative) } : null,
-        plant_classification:    result.plant_classification ?? null,
-        status:                  'done',
+        plant_classification:     result.plant_classification ?? null,
+        nutrient_recommendations: result.nutrient_recommendations ?? null,
+        harvest_guide:            result.harvest_guide ?? null,
+        plantnet_reference_image: plantNet?.referenceImageUrl ?? existingRefImage,
+        status:                   'done',
         // Store photo_tip as gentle guidance in ResultsScreen when image quality was imperfect
         error_details:      result.photo_tip ?? null,
         processing_log:     logger.getLog(),
